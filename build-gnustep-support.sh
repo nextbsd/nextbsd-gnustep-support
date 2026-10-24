@@ -657,6 +657,13 @@ build_cairo() {
     if grep -E -- "-I$SYSROOT$X_PREFIX/include/(pixman-1|freetype2)" "$log"; then
         fail "cairo's meson setup took pixman or freetype from $X_PREFIX"
     fi
+    # Which copies the compiler read (ninja's depfiles; for the log only).
+    # fontconfig's headers sit in plain include/, which pkgconf leaves to the
+    # compiler's default path, so the -I for /usr/X11/include (from x11.pc)
+    # can still find xlibs' copy first until nextbsd-xlibs#9.
+    ninja -C "$COMP_BUILD" -t deps 2>/dev/null \
+        | grep -E -o "$SYSROOT[^ ]*/(pixman\.h|ft2build\.h|fontconfig/fontconfig\.h)" \
+        | sort -u | sed "s#^$SYSROOT#    - compiled with #" || true
     rm -rf "$COMP_ROOT$X_PREFIX/bin/cairo-trace" "$COMP_ROOT$X_PREFIX/lib/cairo"
     stage cairo
     [ ! -e "$x/bin/cairo-trace" ] && [ ! -e "$x/lib/cairo" ] || fail "cairo-trace (GPL-3.0-or-later) was staged"
