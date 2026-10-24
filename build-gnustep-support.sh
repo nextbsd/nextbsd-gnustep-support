@@ -369,7 +369,11 @@ build_gmp() {
     [ "$T" = amd64 ] && fat=(--enable-fat)
     fresh_dirs gmp
     fetch gmp
-    autotools_build --disable-cxx "${fat[@]}"
+    # gmp probes the compiler by linking "$CC $CFLAGS conftest.c", without
+    # LDFLAGS, so lld has to be in CFLAGS too (the site file keeps an
+    # inherited CFLAGS); otherwise the probe links with the runner's x86 ld.
+    CFLAGS="-O2 -pipe -fuse-ld=lld -Wno-unused-command-line-argument" \
+        autotools_build --disable-cxx "${fat[@]}"
     stage gmp
     soname_check libgmp.so libgmp.so.10
     pc_check gmp "$VERSION"
