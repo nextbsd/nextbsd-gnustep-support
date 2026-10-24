@@ -646,7 +646,7 @@ build_ffmpeg() {
         for c in GPL VERSION3 NONFREE NETWORK ZLIB ICONV; do
             grep -qx "#define CONFIG_$c 0" config.h || fail "FFmpeg: CONFIG_$c is not 0"
         done
-        grep -qx '#define CONFIG_OSS_INDEV 1' config.h || fail "FFmpeg: the OSS input device is not enabled"
+        grep -qx '#define CONFIG_OSS_INDEV 1' config_components.h || fail "FFmpeg: the OSS input device is not enabled"
         grep -qx '#define HAVE_PTHREADS 1' config.h || fail "FFmpeg: pthreads are not enabled"
         make $JOBS
         # The libraries, headers, .pc files and the ffmpeg command; not
