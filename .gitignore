@@ -1,0 +1,2 @@
+# Out-of-tree build, download cache and staging scratch from build-gnustep-support.sh.
+.build/
