@@ -18,8 +18,12 @@ sqlite        3.54.1  926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4
 libtiff       4.7.2   4996f0c4f93094719b1ca5c6279b20e588773ba8a247533e486416fb662ddb88  https://download.osgeo.org/libtiff/tiff-4.7.2.tar.xz
 nettle        3.10.2  fe9ff51cb1f2abb5e65a6b8c10a92da0ab5ab6eaf26e7fc2b675c45f1fb519b5  https://mirrors.kernel.org/gnu/nettle/nettle-3.10.2.tar.gz
 gnutls        3.8.13  ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e  https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz
+# flite: festvox's v2.2 release tag archive (flite has no release tarball
+# since 2.1; GitHub's tag archive is what distributions build 2.2 from).
+flite         2.2     ab1555fe5adc3f99f1d4a1a0eb1596d329fd6d74f1464a0097c81f53c0cf9e5c  https://github.com/festvox/flite/archive/refs/tags/v2.2.tar.gz
+ffmpeg        9.0.2   8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 
 # ---- host build tools (built on the runner, used at build time, never shipped) ----
-# NASM: libjpeg-turbo's x86-64 SIMD. Not in the toolchain image yet; built here
+# NASM: libjpeg-turbo's and FFmpeg's x86-64 assembly. Not in the toolchain image yet; built here
 # from source until it is (README.md, "Host build tools").
 nasm          3.02    87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d  https://www.nasm.us/pub/nasm/releasebuilds/3.02/nasm-3.02.tar.xz

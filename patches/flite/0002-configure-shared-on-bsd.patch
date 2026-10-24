@@ -1,0 +1,22 @@
+Description: Build flite's shared libraries on BSD targets
+ configure sets SHFLAGS=-fPIC, which is what turns on flite's shared
+ libraries (config/common_make_rules and main/Makefile test `ifdef SHFLAGS`),
+ only for Linux, GNU and Solaris targets. On a *-freebsd target it is left
+ empty and --enable-shared builds static archives only. Add BSD to the Linux
+ case, as FreeBSD's port does. Applied to the generated configure only, as the
+ port does, so make never sees configure.in newer than configure.
+Origin: FreeBSD port audio/flite, files/patch-configure (first hunk), used as
+ a reference
+Forwarded: not-needed
+---
+--- a/configure
++++ b/configure
+@@ -4213,7 +4213,7 @@
+ 
+ if test "$shared" = true; then
+    case "$target_os" in
+-	linux*|k*bsd*-gnu|gnu*)
++	linux*|k*bsd*-gnu|gnu*|*bsd*)
+ 		SHFLAGS="-fPIC"
+         ;;
+ 	solaris*)

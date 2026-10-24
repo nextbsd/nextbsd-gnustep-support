@@ -1,0 +1,24 @@
+Description: A language/voice set with only the voice GNUstep uses
+ flite's configure --with-langvox=<name> selects config/<name>.lv, which lists
+ the lexicons, languages and voices to build. The shipped sets build six or
+ more voices (about 60 MiB). This one builds cmu_us_kal16, the voice
+ gnustep-gui's speech server registers (Tools/speech/FliteSpeechEngine.m calls
+ register_cmu_us_kal16(), and gnustep-gui's configure only builds the speech
+ tools when -lflite_cmu_us_kal16 links), with the US English language and the
+ CMU lexicon it is built on. EXTRABINS is empty: flite_time needs the
+ cmu_time_awb voice.
+Origin: NextBSD
+Forwarded: not-needed (NextBSD's selection)
+---
+--- /dev/null
++++ b/config/nextbsd.lv
+@@ -0,0 +1,9 @@
++#
++#  NextBSD: the one voice GNUstep's speech server uses (gnustep-gui
++#  Tools/speech/FliteSpeechEngine.m registers cmu_us_kal16), with the US
++#  English language and the CMU lexicon it needs. No extra programs
++#  (flite_time needs the cmu_time_awb voice).
++LEXES = cmulex
++LANGS = usenglish
++VOXES = cmu_us_kal16
++EXTRABINS =

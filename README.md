@@ -11,7 +11,7 @@ epic nextbsd/nextbsd#574.
 |---|---|---|
 | `nextbsd-userland` | Darwin sources, plus Apple's libxml2, libxslt, libffi and curl, and ICU 76.1 | `NextBSD-userland` |
 | `nextbsd-xlibs` | the X client libraries, pixman, freetype, fontconfig | `NextBSD-xlibs` |
-| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS; later cairo, flite, FFmpeg** | **`NextBSD-gnustep-support`** |
+| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, flite, FFmpeg; later cairo** | **`NextBSD-gnustep-support`** |
 | `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool, squashfs) | `NextBSD-gershwin-support` |
 
 ## The rules for what goes here
@@ -51,11 +51,33 @@ Built in this order (plan step 9):
 | libtiff | 4.7.2 | CMake: jpeg, zlib, lzma | `libtiff.so.6`, `libtiff-4.pc` | nextbsd/nextbsd-gnustep-support#1 |
 | nettle | 3.10.2 | autotools, fat | `libnettle.so.8`, `libhogweed.so.6`, its small tools (`nettle-hash`, `pkcs1-conv`, `sexp-conv`, ...) | nextbsd/nextbsd-gnustep-support#1 |
 | GnuTLS | 3.8.13 | autotools, minimal | `libgnutls.so.30`, `gnutls.pc` | nextbsd/nextbsd-gnustep-support#1 |
+| flite | 2.2 | its configure and makefiles, in tree; one voice | `libflite.so.1`, `libflite_cmulex.so.1`, `libflite_usenglish.so.1`, `libflite_cmu_us_kal16.so.1`, `flite/*.h` | nextbsd/nextbsd-gnustep-support#3 |
+| FFmpeg | 9.0.2 | its configure, LGPL, decoders only | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
 
 GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
 base, its bundled libtasn1 and libunistring; p11-kit, libidn2, TPM, DANE,
 brotli, zstd, the C++ and OpenSSL-compatibility libraries and the tools are
 off. It trusts `/etc/ssl/certs`, the directory base OpenSSL uses.
+
+flite is trimmed to one voice (plan Q6): **cmu_us_kal16**, the voice
+gnustep-gui's speech server registers (`Tools/speech/FliteSpeechEngine.m`; its
+configure builds the `speech` and `say` tools only when
+`-lflite_cmu_us_kal16` links), with the US English language and CMU lexicon
+it needs. Output is OSS. No `flite` programs, static archives or other voices.
+
+FFmpeg is LGPL-2.1-or-later and decoder-only (plan Q6): no `--enable-gpl`,
+`--enable-version3` or `--enable-nonfree`, `--disable-autodetect` and
+`--disable-iconv` (no external library of any kind, zlib and libc's iconv
+included), no network, no hardware
+acceleration, no documentation. It has FFmpeg's own decoders, demuxers and
+parsers for local playback of the common formats (AAC, AC-3/E-AC-3, ALAC,
+FLAC, MP1/2/3, Opus, Vorbis, PCM and IMA/MS ADPCM; H.264, HEVC, VP8, VP9,
+MPEG-1/2/4, H.263, MJPEG, Theora; MP4/MOV, Matroska/WebM, Ogg, WAV, AIFF, CAF,
+AU, AVI, MPEG-PS/TS and raw audio streams), the `file` and `pipe` protocols,
+and the few pieces Whisper's `ffmpeg` command lines need: the raw 32-bit float
+PCM encoder and muxer, resampling, and the OSS input device for recording. The
+users are gnustep-gui (NSMovie, NSSound), libs-av, Gershwin's Player and
+Whisper.
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
@@ -80,8 +102,8 @@ NOTICE.md                    per-component provenance and licence
 Nothing upstream is committed. `build-gnustep-support.sh` downloads into
 `.build/dl/`, unpacks into `.build/src/` and builds out of tree under `.build/`.
 The build refuses a patch directory without a `series` file, a `*.patch` not
-listed in it, and a patch without an `Origin:` line. No component needs a
-patch yet.
+listed in it, and a patch without an `Origin:` line. libao and flite carry
+patches.
 
 ## Build model
 
@@ -107,7 +129,10 @@ For each component, in `COMPONENTS` order, it:
    - **autotools** in `--host=<triple>` mode with
      `CONFIG_SITE=cross/autotools/<arch>.site`, `--with-sysroot`, shared only
      (sqlite's autosetup `configure` gets the same file sourced into its
-     environment; giflib's plain Makefile gets its compiler from it);
+     environment; giflib's plain Makefile gets its compiler from it; flite's
+     configure runs in its source tree, the only place its makefiles build);
+   - **FFmpeg's own `configure`** in `--enable-cross-compile` mode, with the
+     compiler and LLVM tools from the same file;
    - **CMake** with `cross/cmake/<arch>.cmake`;
    - **meson** (cairo, nextbsd/nextbsd-gnustep-support#2) with two cross files:
      one generated per run with the sysroot and LLVM paths, then
@@ -134,10 +159,10 @@ through pkgconf with its dependencies. pkgconf searches only the sysroot
 ### Host build tools
 
 Build-time only, never shipped. meson, ninja, cmake, pkgconf and the autotools
-come from the toolchain image. **NASM** (libjpeg-turbo's x86-64 SIMD) isn't in
-the image yet, so the script builds it on the runner from the tarball pinned in
-`sources.lock`; it can move into the image later without changing anything
-else. gperf, which the plan lists, isn't needed by any component here (GnuTLS
+come from the toolchain image. **NASM** (libjpeg-turbo's x86-64 SIMD and
+FFmpeg's x86-64 assembly) isn't in the image yet, so the script builds it on
+the runner from the tarball pinned in `sources.lock`; it can move into the
+image later without changing anything else. gperf, which the plan lists, isn't needed by any component here (GnuTLS
 ships its generated files).
 
 ## CI, artifact, package
