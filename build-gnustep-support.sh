@@ -5,8 +5,9 @@
 #
 # Builds the libraries GNUstep needs on NextBSD (E24, nextbsd/nextbsd#574, plan
 # step 9) for ONE architecture, from pinned upstream release tarballs, into the
-# /usr prefix with upstream sonames. Layout and checks follow the nextbsd-xlibs
-# reference (wiki: Source-Repo-Conventions).
+# /usr prefix with upstream sonames; cairo, which needs X, goes into /usr/X11
+# beside nextbsd-xlibs. Layout and checks follow the nextbsd-xlibs reference
+# (wiki: Source-Repo-Conventions).
 #
 # For each component, in COMPONENTS order:
 #   1. fetch:   download the tarball named in sources.lock, refuse it unless
@@ -16,7 +17,8 @@
 #   3. build:   the upstream build system as it is, out of tree: autotools
 #               (cross/autotools/<arch>.site, --host=<triple>), CMake
 #               (cross/cmake/<arch>.cmake) or meson (cross/meson/<arch>.ini),
-#               installed with DESTDIR into .build/<name>-root-<arch>/;
+#               installed with DESTDIR into .build/<name>-root-<arch>/,
+#               under the component's prefix (/usr, or /usr/X11 for cairo);
 #   4. stage:   check and tidy that install, then copy it into $SYSROOT (so
 #               later components find its headers, .pc files and libraries)
 #               and into $DESTDIR (the published artifact).
@@ -24,14 +26,17 @@
 # Nothing here uses FreeBSD packages, the ports tree or ports tools, and
 # nothing links against nextbsd-userland: these components need only the
 # NextBSD base (compat) sysroot (libc, libm, libthr, zlib, liblzma) and each
-# other. Base's ICU, libxml2, libxslt, libffi and curl are GNUstep's own
-# dependencies, not these libraries'.
+# other, plus, for cairo, nextbsd-xlibs (the X libraries, pixman, freetype,
+# fontconfig and expat in /usr/X11). Base's ICU, libxml2, libxslt, libffi and
+# curl are GNUstep's own dependencies, not these libraries'.
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
 #   Inside the nextbsd-kernel-toolchain container (pinned clang/lld 19.1.7 in
 #   $CROSS_BINDIR, meson, ninja, cmake, pkgconf, autotools), with compat's
-#   `continuous` base extracted into $SYSROOT. $SYSROOT is scratch: this
-#   script installs every component into its /usr as it goes.
+#   `continuous` base and nextbsd-xlibs' `continuous` artifact extracted into
+#   $SYSROOT. $SYSROOT is scratch: this script installs every component into
+#   it as it goes. The xlibs files are build input only and never reach
+#   $DESTDIR.
 #
 # USAGE
 #   ./build-gnustep-support.sh            every component, in COMPONENTS order
@@ -56,11 +61,17 @@ LOCK="$ROOT/sources.lock"
 PATCHES="$ROOT/patches"
 GS_CROSS="$ROOT/cross"
 
-# Install prefix (plan Q7): /usr for libraries that don't need X. Their .pc
+# Install prefixes (plan Q7): /usr for libraries that don't need X. Their .pc
 # files go in FreeBSD base's /usr/libdata/pkgconfig whatever the upstream
-# default, so one directory goes on pkgconf's path.
+# default, so one directory goes on pkgconf's path. Libraries that need X
+# (cairo) go in /usr/X11 beside nextbsd-xlibs, with their .pc files in
+# /usr/X11/lib/pkgconfig as xlibs has them (wiki: Source-Repo-Conventions).
+# fresh_dirs sets COMP_PREFIX and COMP_PCDIR, the pair for the component being
+# built; stage and soname_check use them.
 PREFIX=/usr
 PCDIR=$PREFIX/libdata/pkgconfig
+X_PREFIX=/usr/X11
+X_PCDIR=$X_PREFIX/lib/pkgconfig
 
 case "$T" in
     amd64) CROSS_TRIPLE=x86_64-unknown-freebsd ;;
@@ -76,7 +87,7 @@ export SYSROOT DESTDIR CROSS_BINDIR GS_CROSS
 # pkgconf only, and only the sysroot's .pc directories (base and this repo,
 # then NextBSD X for cairo): never the build host's.
 export PKG_CONFIG=pkgconf
-export PKG_CONFIG_LIBDIR="$SYSROOT$PCDIR:$SYSROOT/usr/X11/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR="$SYSROOT$PCDIR:$SYSROOT$X_PCDIR"
 export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
 unset PKG_CONFIG_PATH
 
@@ -109,14 +120,37 @@ needed_check() {
     note "DT_NEEDED ok: $(basename "$obj") -> $want"
 }
 
+# needed_resolve_check <obj>: every DT_NEEDED of a staged object is a library
+# the target has in /lib, /usr/lib or /usr/X11/lib (base, this repo,
+# nextbsd-xlibs; all in $SYSROOT by now), and the object carries no
+# DT_RPATH/DT_RUNPATH. rtld finds /usr/X11/lib through the ldconfig hints, as
+# it does for xlibs' own libraries (nextbsd/nextbsd-overlays#22), so nothing
+# may record a build path or a private search path.
+needed_resolve_check() {
+    local obj="$1" dyn n d found
+    dyn=$("$READELF" -d "$obj") || fail "$obj: cannot read its dynamic section"
+    if printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)'; then
+        fail "$(basename "$obj") carries an RPATH/RUNPATH"
+    fi
+    for n in $(printf '%s\n' "$dyn" | sed -n 's/.*(NEEDED).*\[\(.*\)\]$/\1/p'); do
+        found=
+        for d in /lib /usr/lib "$X_PREFIX/lib"; do
+            if [ -e "$SYSROOT$d/$n" ]; then found=$d; break; fi
+        done
+        [ -n "$found" ] || fail "$(basename "$obj"): DT_NEEDED $n is in none of /lib, /usr/lib, $X_PREFIX/lib"
+    done
+    note "DT_NEEDED resolve, no RPATH/RUNPATH: $(basename "$obj")"
+}
+
 # soname_check <lib> <soname>: the staged library (by its development link in
-# $DESTDIR/usr/lib) carries the upstream soname, and the soname link exists.
+# the component's lib directory, $DESTDIR/usr/lib or $DESTDIR/usr/X11/lib)
+# carries the upstream soname, and the soname link exists.
 soname_check() {
-    local lib="$DESTDIR$PREFIX/lib/$1" want="$2"
+    local lib="$DESTDIR$COMP_PREFIX/lib/$1" want="$2"
     [ -e "$lib" ] || fail "$1 was not staged"
     "$READELF" -d "$lib" 2>/dev/null | grep -q "SONAME.*\[$want\]" \
         || fail "$1 does not have SONAME $want"
-    [ -e "$DESTDIR$PREFIX/lib/$want" ] || fail "$want was not staged"
+    [ -e "$DESTDIR$COMP_PREFIX/lib/$want" ] || fail "$want was not staged"
     note "SONAME ok: $want"
 }
 
@@ -183,9 +217,17 @@ apply_patches() {
 # configure options).
 csv_list() { local IFS=,; echo "$*"; }
 
-# Fresh out-of-tree build and install-root directories for a component.
+# fresh_dirs <name> [prefix]: fresh out-of-tree build and install-root
+# directories for a component, and its install prefix (default /usr; /usr/X11
+# for a library that needs X) with that prefix's .pc directory.
 fresh_dirs() {
     local name="$1"
+    COMP_PREFIX="${2:-$PREFIX}"
+    case "$COMP_PREFIX" in
+        "$PREFIX")   COMP_PCDIR=$PCDIR ;;
+        "$X_PREFIX") COMP_PCDIR=$X_PCDIR ;;
+        *)           fail "$name: install prefix $COMP_PREFIX is neither $PREFIX nor $X_PREFIX" ;;
+    esac
     COMP_BUILD="$BUILD/$name-$T"
     COMP_ROOT="$BUILD/$name-root-$T"
     rm -rf "$COMP_BUILD" "$COMP_ROOT"
@@ -227,10 +269,31 @@ cmake_build() {
     DESTDIR="$COMP_ROOT" cmake --install "$COMP_BUILD"
 }
 
-# The base's own files, listed while the sysroot is still the pristine compat
-# base (before this script has installed anything into it), so stage can
-# refuse a component that would overwrite one. A later partial run reuses the
-# list.
+# meson_build [meson -D options...]: configure, build and install $SRC_DIR into
+# $COMP_ROOT under $COMP_PREFIX with the arch's cross files. The first is
+# generated here and carries this run's paths (sysroot, LLVM binaries); the
+# second is the checked-in cross/meson/<arch>.ini, which uses them.
+meson_build() {
+    local paths="$BUILD/cross/paths-$T.ini"
+    mkdir -p "$BUILD/cross"
+    cat > "$paths" <<EOF
+[constants]
+sysroot = '$SYSROOT'
+llvm_bindir = '$CROSS_BINDIR'
+EOF
+    meson setup "$COMP_BUILD" "$SRC_DIR" \
+        --cross-file "$paths" --cross-file "$GS_CROSS/meson/$T.ini" \
+        --prefix="$COMP_PREFIX" --libdir=lib --mandir=share/man \
+        --buildtype=release -Ddefault_library=shared --wrap-mode=nodownload \
+        "$@"
+    meson compile -C "$COMP_BUILD"
+    DESTDIR="$COMP_ROOT" meson install -C "$COMP_BUILD" --no-rebuild
+}
+
+# The base's own files (compat, plus the nextbsd-xlibs artifact CI stages
+# under it), listed while the sysroot doesn't yet hold anything this script
+# installs, so stage can refuse a component that would overwrite one. A later
+# partial run reuses the list.
 base_list() {
     BASE_LIST="$BUILD/base-files-$T.list"
     if [ ! -e "$SYSROOT$PREFIX/include/gif_lib.h" ]; then
@@ -242,28 +305,35 @@ base_list() {
 
 # stage <name>: tidy and check $COMP_ROOT, then copy it into $SYSROOT (for the
 # components after this one) and $DESTDIR (the artifact).
-#   - everything must be under /usr, and nothing may replace a base file;
+#   - everything must be under the component's prefix ($COMP_PREFIX: /usr, or
+#     /usr/X11 for cairo), and nothing may replace a base or xlibs file;
 #   - libtool .la files, docs and info manuals are dropped (man pages are kept);
-#   - .pc files move to /usr/libdata/pkgconfig;
+#   - .pc files move to the prefix's .pc directory ($COMP_PCDIR:
+#     /usr/libdata/pkgconfig, or /usr/X11/lib/pkgconfig) and must say
+#     prefix=$COMP_PREFIX;
 #   - no .pc file may name /usr/local or a build-host path.
 stage() {
-    local name="$1" x="$COMP_ROOT$PREFIX" stray f clash
-    [ -d "$x" ] || fail "$name installed nothing under $PREFIX"
-    stray=$(cd "$COMP_ROOT" && find . -mindepth 1 ! -path ".$PREFIX" ! -path ".$PREFIX/*")
-    [ -z "$stray" ] || fail "$name installed outside $PREFIX: $stray"
+    local name="$1" p="$COMP_PREFIX" x="$COMP_ROOT$COMP_PREFIX" stray f clash
+    [ -d "$x" ] || fail "$name installed nothing under $p"
+    # ./usr itself is allowed: it is the parent of /usr/X11.
+    stray=$(cd "$COMP_ROOT" && find . -mindepth 1 ! -path ./usr ! -path ".$p" ! -path ".$p/*")
+    [ -z "$stray" ] || fail "$name installed outside $p: $stray"
     find "$x" -name '*.la' -delete
     rm -rf "$x/share/doc" "$x/share/info"
-    for f in lib/pkgconfig share/pkgconfig; do
+    # meson puts a library's .pc in libdata/pkgconfig when host_machine is
+    # freebsd (the base layout), whatever the prefix.
+    for f in lib/pkgconfig share/pkgconfig libdata/pkgconfig; do
+        [ "$p/$f" = "$COMP_PCDIR" ] && continue
         if [ -d "$x/$f" ]; then
-            mkdir -p "$COMP_ROOT$PCDIR"
-            mv "$x/$f"/*.pc "$COMP_ROOT$PCDIR/"
+            mkdir -p "$COMP_ROOT$COMP_PCDIR"
+            mv "$x/$f"/*.pc "$COMP_ROOT$COMP_PCDIR/"
             rmdir "$x/$f"
         fi
     done
-    for f in "$COMP_ROOT$PCDIR"/*.pc; do
+    for f in "$COMP_ROOT$COMP_PCDIR"/*.pc; do
         [ -e "$f" ] || continue
         [ -L "$f" ] && continue
-        grep -q "^prefix=$PREFIX\$" "$f" || fail "$(basename "$f"): prefix is not $PREFIX"
+        grep -q "^prefix=$p\$" "$f" || fail "$(basename "$f"): prefix is not $p"
         if grep -n -F -e /usr/local -e "$ROOT" -e "$SYSROOT" "$f"; then
             fail "$(basename "$f") names /usr/local or a build-host path"
         fi
@@ -303,7 +373,7 @@ host_nasm() {
 # =============================================================================
 # Components, in build order (plan step 9): giflib, jpeg, png, gmp,
 # libsndfile, libao, sqlite; then libtiff (jpeg) and nettle (gmp); then GnuTLS;
-# then flite and FFmpeg.
+# then cairo (png, and nextbsd-xlibs); then flite and FFmpeg.
 # No component has a D-Bus, Avahi or GLib option left on.
 # =============================================================================
 
@@ -519,6 +589,74 @@ build_gnutls() {
     pc_check gnutls "$VERSION"
 }
 
+# cairo — meson, into /usr/X11 (plan Q7: it needs X), beside nextbsd-xlibs.
+# From xlibs (staged in the sysroot by CI, never in this artifact): pixman,
+# freetype, fontconfig (with expat) and the X libraries (libX11, libXext,
+# libXrender, libxcb with xcb-render and xcb-shm). libpng from this repo, zlib
+# from base.
+#   on:  the image, xlib (with XRender), xcb (with SHM), PNG, PDF, PostScript,
+#        SVG, script and tee surfaces; FreeType and fontconfig fonts.
+#   off: GLib, and with it cairo-gobject (plan D2 keeps GLib out); LZO (the
+#        script surface's optional compression); xlib-xcb (upstream's
+#        default); Quartz and DirectWrite (win32 is built only for Windows
+#        hosts); libspectre; binutils' bfd symbol lookup in cairo-trace (GPL);
+#        the GTK utilities; tests, and with them the poppler, librsvg and
+#        ghostscript converters only the tests use; gtk-doc.
+# Upstream also installs its script interpreter library (LGPL-2.1/MPL-1.1, like
+# the library; kept) and cairo-trace, an LD_PRELOAD debugging tracer
+# (bin/cairo-trace, lib/cairo/libcairo-trace.so and libcairo-fdr.so), which is
+# GPL-3.0-or-later and has no meson option: it is removed from the install
+# root, so nothing GPL ships.
+# IPC_RMID_DEFERRED_RELEASE comes from a check that runs a program on the
+# target; under cross builds cairo takes it as false, the answer that is safe
+# on any kernel (the SHM segment is removed when cairo frees it, not right
+# after the X server attaches it).
+CAIRO_PCS="cairo cairo-png cairo-ft cairo-fc cairo-xlib cairo-xlib-xrender cairo-xcb
+    cairo-xcb-shm cairo-pdf cairo-ps cairo-svg cairo-script cairo-tee cairo-script-interpreter"
+CAIRO_FEATURES="XLIB_SURFACE XLIB_XRENDER_SURFACE XCB_SURFACE XCB_SHM_FUNCTIONS PNG_FUNCTIONS
+    FT_FONT FC_FONT PDF_SURFACE PS_SURFACE SVG_SURFACE SCRIPT_SURFACE TEE_SURFACE"
+
+build_cairo() {
+    comp "cairo [meson cross, $X_PREFIX]"
+    [ -f "$SYSROOT$X_PCDIR/x11.pc" ] && [ -f "$SYSROOT$X_PCDIR/pixman-1.pc" ] \
+        || fail "cairo needs nextbsd-xlibs in $SYSROOT$X_PREFIX (CI stages its continuous artifact)"
+    fresh_dirs cairo "$X_PREFIX"
+    fetch cairo
+    meson_build \
+        -Dxlib=enabled -Dxcb=enabled -Dxlib-xcb=disabled \
+        -Dpng=enabled -Dzlib=enabled -Dfreetype=enabled -Dfontconfig=enabled -Dtee=enabled \
+        -Dglib=disabled -Dlzo=disabled -Dspectre=disabled -Dsymbol-lookup=disabled \
+        -Dquartz=disabled -Ddwrite=disabled -Dgtk2-utils=disabled \
+        -Dtests=disabled -Dgtk_doc=false
+    rm -rf "$COMP_ROOT$X_PREFIX/bin/cairo-trace" "$COMP_ROOT$X_PREFIX/lib/cairo"
+    stage cairo
+    local x="$DESTDIR$X_PREFIX" lib="$DESTDIR$X_PREFIX/lib/libcairo.so.2" n f
+    [ ! -e "$x/bin/cairo-trace" ] && [ ! -e "$x/lib/cairo" ] || fail "cairo-trace (GPL-3.0-or-later) was staged"
+    soname_check libcairo.so libcairo.so.2
+    soname_check libcairo-script-interpreter.so libcairo-script-interpreter.so.2
+    for n in libpng16.so.16 libz.so libpixman-1.so.0 libfontconfig.so.1 libfreetype.so.6 \
+             libX11.so.6 libXext.so.6 libXrender.so.1 libxcb.so.1 libxcb-render.so.0 libxcb-shm.so.0; do
+        needed_check "$lib" "$n"
+    done
+    if "$READELF" -d "$lib" | grep -E 'NEEDED.*\[lib(lzo2|glib-2|gobject-2|bfd|X11-xcb|spectre)'; then
+        fail "libcairo links a library that should be off"
+    fi
+    while IFS= read -r f; do
+        needed_resolve_check "$f"
+    done < <(find "$x/lib" -type f -name '*.so*')
+    for n in $CAIRO_FEATURES; do
+        grep -qx "#define CAIRO_HAS_$n 1" "$x/include/cairo/cairo-features.h" \
+            || fail "cairo-features.h: CAIRO_HAS_$n is not 1"
+    done
+    if grep -E 'CAIRO_HAS_(GOBJECT_FUNCTIONS|XLIB_XCB_FUNCTIONS|QUARTZ|WIN32|DWRITE)' "$x/include/cairo/cairo-features.h"; then
+        fail "cairo-features.h has a backend that should be off"
+    fi
+    [ ! -e "$DESTDIR$X_PCDIR/cairo-gobject.pc" ] || fail "cairo-gobject was staged"
+    for n in $CAIRO_PCS; do
+        pc_check "$n" "$VERSION"
+    done
+}
+
 # flite — its own autoconf configure and makefiles, which build in the source
 # tree only. One voice, cmu_us_kal16 (plan Q6): gnustep-gui's speech server
 # (Tools/speech/FliteSpeechEngine.m) registers that voice and no other, and
@@ -685,7 +823,7 @@ build_ffmpeg() {
 # Add a component: pin it in sources.lock, write build_<name>() above (hyphens
 # in the name become underscores in the function), put its patches, if any, in
 # patches/<name>/ with a series file, and append <name> here in build order.
-COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls flite ffmpeg"
+COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
@@ -697,7 +835,7 @@ if [ $# -gt 0 ]; then
     COMPONENTS="$*"
 fi
 
-echo "nextbsd-gnustep-support: building [$COMPONENTS] for $T/$TA into $DESTDIR$PREFIX"
+echo "nextbsd-gnustep-support: building [$COMPONENTS] for $T/$TA into $DESTDIR ($PREFIX; $X_PREFIX for cairo)"
 mkdir -p "$DESTDIR" "$BUILD"
 base_list
 for c in $COMPONENTS; do
