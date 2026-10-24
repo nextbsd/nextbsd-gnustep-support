@@ -11,7 +11,7 @@ epic nextbsd/nextbsd#574.
 |---|---|---|
 | `nextbsd-userland` | Darwin sources, plus Apple's libxml2, libxslt, libffi and curl, and ICU 76.1 | `NextBSD-userland` |
 | `nextbsd-xlibs` | the X client libraries, pixman, freetype, fontconfig | `NextBSD-xlibs` |
-| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, flite, FFmpeg; later cairo** | **`NextBSD-gnustep-support`** |
+| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg** | **`NextBSD-gnustep-support`** |
 | `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool, squashfs) | `NextBSD-gershwin-support` |
 
 ## The rules for what goes here
@@ -28,7 +28,9 @@ epic nextbsd/nextbsd#574.
    replacement makefiles.
 4. **Installed into `/usr`** (plan Q7): libraries in `/usr/lib`, headers in
    `/usr/include`, `.pc` files in `/usr/libdata/pkgconfig`, with upstream
-   sonames. Libraries that need X go to `/usr/X11` (cairo, nextbsd/nextbsd-gnustep-support#2).
+   sonames. Libraries that need X go to `/usr/X11` beside nextbsd-xlibs (cairo,
+   nextbsd/nextbsd-gnustep-support#2), with their `.pc` files in
+   `/usr/X11/lib/pkgconfig` as xlibs has them.
    Never `/usr/local`, which belongs to packages a user adds.
 5. **No D-Bus, no Avahi** (plan D2): every option that would pull either in is
    off. mDNSResponder's `dns_sd` is NextBSD's DNS-SD. pkgconf, never
@@ -51,6 +53,7 @@ Built in this order (plan step 9):
 | libtiff | 4.7.2 | CMake: jpeg, zlib, lzma | `libtiff.so.6`, `libtiff-4.pc` | nextbsd/nextbsd-gnustep-support#1 |
 | nettle | 3.10.2 | autotools, fat | `libnettle.so.8`, `libhogweed.so.6`, its small tools (`nettle-hash`, `pkcs1-conv`, `sexp-conv`, ...) | nextbsd/nextbsd-gnustep-support#1 |
 | GnuTLS | 3.8.13 | autotools, minimal | `libgnutls.so.30`, `gnutls.pc` | nextbsd/nextbsd-gnustep-support#1 |
+| cairo | 1.18.6 | meson, into `/usr/X11`; xlib, xcb, png, FreeType/fontconfig; no GLib, no LZO | `/usr/X11/lib/libcairo.so.2`, `libcairo-script-interpreter.so.2`, `cairo.pc` and its per-backend `.pc` files | nextbsd/nextbsd-gnustep-support#2 |
 | flite | 2.2 | its configure and makefiles, in tree; one voice | `libflite.so.1`, `libflite_cmulex.so.1`, `libflite_usenglish.so.1`, `libflite_cmu_us_kal16.so.1`, `flite/*.h` | nextbsd/nextbsd-gnustep-support#3 |
 | FFmpeg | 9.0.2 | its configure, LGPL, decoders only | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
 
@@ -58,6 +61,22 @@ GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
 base, its bundled libtasn1 and libunistring; p11-kit, libidn2, TPM, DANE,
 brotli, zstd, the C++ and OpenSSL-compatibility libraries and the tools are
 off. It trusts `/etc/ssl/certs`, the directory base OpenSSL uses.
+
+cairo (gnustep-back's cairo backend) needs X, so it installs into `/usr/X11`
+(plan Q7), the only component here that does. It builds against
+nextbsd-xlibs, whose `continuous` artifact CI unpacks into the sysroot as
+build input only (never into this repo's artifact): pixman, freetype,
+fontconfig, expat and the X libraries (libX11, libXext, libXrender, libxcb).
+libpng comes from this repo and zlib from base. On: the image, xlib (with
+XRender), xcb (with SHM), PNG, PDF, PostScript, SVG, script and tee surfaces,
+FreeType and fontconfig fonts. Off: GLib (so no cairo-gobject), LZO, xlib-xcb,
+Quartz, DirectWrite, libspectre, the bfd symbol lookup, the GTK utilities,
+tests (and the poppler, librsvg and ghostscript converters they use) and
+gtk-doc. Its `DT_NEEDED` entries are bare sonames in `/lib`, `/usr/lib` and
+`/usr/X11/lib` with no `RUNPATH`; at run time `/usr/X11/lib` is found through
+the ldconfig hints, as for xlibs' own libraries (nextbsd/nextbsd-overlays#22).
+cairo-trace and cairo-fdr, GPL-3.0-or-later debugging tools upstream's meson
+always builds, are removed before staging.
 
 flite is trimmed to one voice (plan Q6): **cmu_us_kal16**, the voice
 gnustep-gui's speech server registers (`Tools/speech/FliteSpeechEngine.m`; its
@@ -109,14 +128,15 @@ patches.
 
 `build-gnustep-support.sh` runs inside the `nextbsd-kernel-toolchain`
 container (the pinned clang/lld 19.1.7 in `/usr/lib/llvm-19`, meson, ninja,
-cmake, pkgconf, autotools) with compat's `continuous` base extracted as the
-sysroot. It needs:
+cmake, pkgconf, autotools) with compat's `continuous` base and nextbsd-xlibs'
+`continuous` artifact (`/usr/X11`, for cairo) extracted as the sysroot. The
+xlibs files are build input only; they never reach `DESTDIR`. It needs:
 
 | Variable | Meaning |
 |---|---|
 | `T` | target: `amd64` or `arm64` |
 | `TA` | FreeBSD `TARGET_ARCH`: `amd64` or `aarch64` |
-| `SYSROOT` | the staged NextBSD base; scratch, since each component is installed into its `/usr` |
+| `SYSROOT` | the staged NextBSD base with nextbsd-xlibs; scratch, since each component is installed into it |
 | `CROSS_BINDIR` | the toolchain's clang, lld and LLVM binutils (set by the container image) |
 | `DESTDIR` | where to stage the artifact; default `/stage` |
 
@@ -134,26 +154,29 @@ For each component, in `COMPONENTS` order, it:
    - **FFmpeg's own `configure`** in `--enable-cross-compile` mode, with the
      compiler and LLVM tools from the same file;
    - **CMake** with `cross/cmake/<arch>.cmake`;
-   - **meson** (cairo, nextbsd/nextbsd-gnustep-support#2) with two cross files:
+   - **meson** (cairo) with two cross files:
      one generated per run with the sysroot and LLVM paths, then
      `cross/meson/<arch>.ini`, which declares `system = 'freebsd'` so
      upstream's FreeBSD code paths apply;
 4. checks and tidies the install, then copies it into the sysroot, so later
    components find it, and into `DESTDIR`.
 
-**Checks the build enforces:** everything installs under `/usr` and nothing
-replaces a file of the compat base; no `.la` files, docs or info manuals; `.pc`
-files are moved to `/usr/libdata/pkgconfig`, have `prefix=/usr`, and name
-neither `/usr/local` nor a build path; every library has its upstream soname
-and the `DT_NEEDED` entries it should (cross `readelf -d`); each `.pc` resolves
-through pkgconf with its dependencies. pkgconf searches only the sysroot
+**Checks the build enforces:** everything installs under the component's
+prefix (`/usr`, or `/usr/X11` for cairo) and nothing replaces a file of the
+compat base or nextbsd-xlibs; no `.la` files, docs or info manuals; `.pc` files
+are moved to the prefix's directory (`/usr/libdata/pkgconfig`, or
+`/usr/X11/lib/pkgconfig`), have that `prefix=`, and name neither `/usr/local`
+nor a build path; every library has its upstream soname and the `DT_NEEDED`
+entries it should (cross `readelf -d`); cairo's libraries also have every
+`DT_NEEDED` in `/lib`, `/usr/lib` or `/usr/X11/lib` and no `RPATH`/`RUNPATH`;
+each `.pc` resolves through pkgconf with its dependencies. pkgconf searches only the sysroot
 (`/usr/libdata/pkgconfig`, then `/usr/X11/lib/pkgconfig` for cairo) with
 `PKG_CONFIG_SYSROOT_DIR` set, so nothing from the Linux host leaks into a build.
 
 ```
 ./build-gnustep-support.sh            # every component
 ./build-gnustep-support.sh gnutls     # one component; its dependencies must
-                                      # already be in $SYSROOT/usr
+                                      # already be in $SYSROOT
 ```
 
 ### Host build tools
@@ -173,8 +196,8 @@ runs. A push to `main`, or a manual run from `main`, also publishes
 `/`: the whole install, headers, `.pc` files and man pages included (Gershwin
 builds GNUstep on the machine, plan D10/D11). Pull requests never publish.
 
-Builds run by hand, in order, after the repos they depend on (the rebuild
-policy): there is no `repository_dispatch` trigger, and this repo dispatches
+Builds run by hand, in order, after the repos they depend on (compat and
+nextbsd-xlibs; the rebuild policy): there is no `repository_dispatch` trigger, and this repo dispatches
 nothing to any other repo. `nextbsd-pkg` repackages the tarball as
 `NextBSD-gnustep-support` when it is run by hand (nextbsd/nextbsd-pkg#27).
 
