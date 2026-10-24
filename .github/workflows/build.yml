@@ -1,0 +1,107 @@
+name: Build NextBSD gnustep-support (libraries GNUstep needs)
+
+# Cross-builds the support libraries GNUstep needs on NextBSD (E24,
+# nextbsd/nextbsd#574) into /usr for amd64 and arm64 on the x86_64 runner,
+# inside the per-arch nextbsd-kernel-toolchain container, against compat's
+# `continuous` base as the sysroot, from the pinned tarballs in sources.lock.
+# Same shape as nextbsd-xlibs (wiki: Source-Repo-Conventions).
+#
+# Builds run by hand, in order, after their upstream repos (rebuild policy):
+# there is no repository_dispatch trigger here, and nothing is dispatched to
+# any other repo. Pull requests build only; a push to main or a manual run
+# also publishes nextbsd-gnustep-support-<arch>.tar.gz to the `continuous`
+# release. Packaging (nextbsd-pkg) is run by hand.
+
+on:
+  push:
+    branches: [main]
+    paths: ['build-gnustep-support.sh', 'sources.lock', 'patches/**', 'cross/**', '.github/workflows/build.yml']
+  pull_request:
+    paths: ['build-gnustep-support.sh', 'sources.lock', 'patches/**', 'cross/**', '.github/workflows/build.yml']
+  workflow_dispatch:
+    inputs:
+      fbsd_sha:
+        description: 'Pinned FreeBSD SHA for the toolchain image tag (blank = latest)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: gnustep-support (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, target_arch: amd64 }
+          - { arch: arm64, target_arch: aarch64 }
+    container:
+      # Per-arch toolchain image: the pinned llvmorg-19.1.7 clang, lld and LLVM
+      # binutils at $CROSS_BINDIR, plus meson, ninja, cmake, pkgconf and the
+      # autotools (nextbsd-toolchain#13). Nothing is apt-installed here.
+      image: ghcr.io/nextbsd/nextbsd-kernel-toolchain:${{ matrix.arch }}-${{ inputs.fbsd_sha && format('fbsd-{0}', inputs.fbsd_sha) || 'latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Stage the cross sysroot from compat's `continuous` base: libc, libm,
+      # libthr, zlib, liblzma, headers and /usr/libdata/pkgconfig. A public
+      # read, so the built-in token is enough and fork PRs work.
+      # build-gnustep-support.sh installs each component into this sysroot's
+      # /usr as it goes.
+      - name: Stage sysroot from compat continuous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/sysroot"
+          gh release download continuous \
+            --repo nextbsd/nextbsd-freebsd-compat \
+            --pattern "nextbsd-base-${{ matrix.arch }}.tar.gz" \
+            --output /tmp/base.tar.gz --clobber
+          tar -C "$GITHUB_WORKSPACE/sysroot" -xzf /tmp/base.tar.gz
+
+      - name: Build gnustep-support libraries into /stage
+        env:
+          T: ${{ matrix.arch }}
+          TA: ${{ matrix.target_arch }}
+          SYSROOT: ${{ github.workspace }}/sysroot
+          DESTDIR: /stage
+        run: ./build-gnustep-support.sh
+
+      # Raw tar of /stage rooted at /: the whole install under /usr, headers,
+      # .pc files and .so links included. Splitting runtime from development
+      # files is nextbsd-pkg's job.
+      - name: Pack gnustep-support artifact
+        run: |
+          tar -C /stage -czf "/tmp/nextbsd-gnustep-support-${{ matrix.arch }}.tar.gz" .
+          tar -tzvf "/tmp/nextbsd-gnustep-support-${{ matrix.arch }}.tar.gz" | grep -v '/$' || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nextbsd-gnustep-support-${{ matrix.arch }}
+          path: /tmp/nextbsd-gnustep-support-${{ matrix.arch }}.tar.gz
+
+  publish:
+    needs: build
+    # Pushes to main and manual runs from main; never pull requests.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Gather artifacts
+        run: |
+          mkdir -p out
+          find artifacts -name 'nextbsd-gnustep-support-*.tar.gz' -exec cp {} out/ \;
+          ls -la out/
+      - name: Publish to continuous release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous gnustep-support build
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: out/*.tar.gz
+      # That is where this stops: nothing downstream is dispatched or rebuilt.

@@ -1,0 +1,40 @@
+Description: Use libtool 2.4.6's FreeBSD library versioning
+ libao 1.2.0 ships the ltmain.sh of GNU libtool 2.4.2, which names a FreeBSD
+ shared library after libtool's "current" interface number alone: libao's
+ -version-info 5:0:1 gives libao.so.5. Later GNU libtool (2.4.6, the version in
+ gmp 6.3.0's tarball) versions freebsd-elf as current - age, as on Linux,
+ which gives upstream's soname libao.so.4 (also FreeBSD's). This is that hunk
+ of libtool 2.4.6's ltmain.sh, and the matching freebsd-elf soname_spec and
+ library_names_spec from its libtool.m4, applied to the generated configure
+ (libao 1.2.0's has no soname_spec for freebsd-elf, so no DT_SONAME at all).
+Origin: GNU libtool 2.4.6: build-aux/ltmain.sh (freebsd-elf case of the
+ version_type switch) and m4/libtool.m4 (freebsd-elf dynamic linker specs)
+Forwarded: not-needed (fixed in later libtool; libao has had no release since
+ 1.2.0)
+---
+--- a/configure
++++ b/configure
+@@ -10768,7 +10768,8 @@
+   version_type=freebsd-$objformat
+   case $version_type in
+     freebsd-elf*)
+-      library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext} $libname${shared_ext}'
++      library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major $libname${shared_ext}'
++      soname_spec='${libname}${release}${shared_ext}$major'
+       need_version=no
+       need_lib_prefix=no
+       ;;
+--- a/ltmain.sh
++++ b/ltmain.sh
+@@ -7414,8 +7414,9 @@
+ 	  ;;
+ 
+ 	freebsd-elf)
+-	  major=".$current"
+-	  versuffix=".$current"
++	  func_arith $current - $age
++	  major=.$func_arith_result
++	  versuffix=$major.$age.$revision
+ 	  ;;
+ 
+ 	irix | nonstopux)
