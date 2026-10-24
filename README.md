@@ -66,8 +66,9 @@ configure builds the `speech` and `say` tools only when
 it needs. Output is OSS. No `flite` programs, static archives or other voices.
 
 FFmpeg is LGPL-2.1-or-later and decoder-only (plan Q6): no `--enable-gpl`,
-`--enable-version3` or `--enable-nonfree`, `--disable-autodetect` (no external
-library of any kind, zlib and iconv included), no network, no hardware
+`--enable-version3` or `--enable-nonfree`, `--disable-autodetect` and
+`--disable-iconv` (no external library of any kind, zlib and libc's iconv
+included), no network, no hardware
 acceleration, no documentation. It has FFmpeg's own decoders, demuxers and
 parsers for local playback of the common formats (AAC, AC-3/E-AC-3, ALAC,
 FLAC, MP1/2/3, Opus, Vorbis, PCM and IMA/MS ADPCM; H.264, HEVC, VP8, VP9,

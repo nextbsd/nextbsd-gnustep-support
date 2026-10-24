@@ -573,8 +573,10 @@ build_flite() {
 
 # FFmpeg — its own configure (not autoconf), out of tree, in cross mode. Plan
 # Q6: LGPL only (no --enable-gpl, --enable-version3 or --enable-nonfree), no
-# external libraries at all (--disable-autodetect: no zlib, iconv, SDL, X,
-# VA-API, Vulkan, ALSA/PulseAudio; nothing that could bring D-Bus or Avahi), no
+# external libraries at all (--disable-autodetect: no zlib, SDL, X, VA-API,
+# Vulkan, ALSA/PulseAudio; nothing that could bring D-Bus or Avahi; and
+# --disable-iconv, since configure still probes libc's iconv under
+# --disable-autodetect; it only serves subtitle charset conversion), no
 # network (no http/tcp/rtsp, no avahi or mDNS), no documentation. Components
 # start from --disable-everything:
 #   - decoders, demuxers and parsers for local playback of the common audio
@@ -624,7 +626,8 @@ build_ffmpeg() {
             --incdir="$PREFIX/include" --pkgconfigdir="$PCDIR" \
             --enable-shared --disable-static --enable-pic --disable-debug \
             --disable-gpl --disable-version3 --disable-nonfree \
-            --disable-autodetect --enable-pthreads --disable-network --disable-doc \
+            --disable-autodetect --disable-iconv --enable-pthreads \
+            --disable-network --disable-doc \
             --disable-programs --enable-ffmpeg \
             --disable-everything \
             --enable-decoder="$(csv_list $FFMPEG_DECODERS)" \
