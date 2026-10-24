@@ -8,10 +8,14 @@
 
 : "${SYSROOT:?}" "${CROSS_BINDIR:?}" "${gs_triple:?}"
 
-# The cross compiler. -fuse-ld=lld goes in LDFLAGS (link only); clang finds
-# ld.lld beside itself.
-CC="$CROSS_BINDIR/clang --target=$gs_triple --sysroot=$SYSROOT"
-CXX="$CROSS_BINDIR/clang++ --target=$gs_triple --sysroot=$SYSROOT"
+# The cross compiler. clang finds ld.lld beside itself. -fuse-ld=lld is part
+# of CC, not only LDFLAGS: the libtool bundled in older releases (gmp 6.3.0,
+# libao 1.2.0) drops it from link lines, and gmp's compiler probe links
+# without LDFLAGS, so either would quietly link with the runner's ld (wrong
+# for arm64). -Qunused-arguments keeps compile-only steps from warning that
+# the linker flag is unused.
+CC="$CROSS_BINDIR/clang --target=$gs_triple --sysroot=$SYSROOT -fuse-ld=lld -Qunused-arguments"
+CXX="$CROSS_BINDIR/clang++ --target=$gs_triple --sysroot=$SYSROOT -fuse-ld=lld -Qunused-arguments"
 CFLAGS="${CFLAGS:--O2 -pipe}"
 CXXFLAGS="${CXXFLAGS:--O2 -pipe}"
 LDFLAGS="-fuse-ld=lld ${LDFLAGS:-}"
