@@ -26,17 +26,19 @@
 # Nothing here uses FreeBSD packages, the ports tree or ports tools, and
 # nothing links against nextbsd-userland: these components need only the
 # NextBSD base (compat) sysroot (libc, libm, libthr, zlib, liblzma) and each
-# other, plus, for cairo, nextbsd-xlibs (the X libraries, pixman, freetype,
-# fontconfig and expat in /usr/X11). Base's ICU, libxml2, libxslt, libffi and
+# other, plus, for cairo, nextbsd-displayserver-support (pixman, freetype,
+# fontconfig and expat in /usr) and nextbsd-xlibs (the X libraries in
+# /usr/X11). Base's ICU, libxml2, libxslt, libffi and
 # curl are GNUstep's own dependencies, not these libraries'.
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
 #   Inside the nextbsd-kernel-toolchain container (pinned clang/lld 19.1.7 in
 #   $CROSS_BINDIR, meson, ninja, cmake, pkgconf, autotools), with compat's
-#   `continuous` base and nextbsd-xlibs' `continuous` artifact extracted into
-#   $SYSROOT. $SYSROOT is scratch: this script installs every component into
-#   it as it goes. The xlibs files are build input only and never reach
-#   $DESTDIR.
+#   `continuous` base, nextbsd-displayserver-support's and nextbsd-xlibs'
+#   `continuous` artifacts extracted into $SYSROOT, in that order. $SYSROOT is
+#   scratch: this script installs every component into it as it goes. The
+#   displayserver-support and xlibs files are build input only and never
+#   reach $DESTDIR.
 #
 # USAGE
 #   ./build-gnustep-support.sh            every component, in COMPONENTS order
@@ -84,8 +86,11 @@ JOBS=-j"$(nproc 2>/dev/null || echo 2)"
 SYSROOT="$(cd "$SYSROOT" && pwd)"
 export SYSROOT DESTDIR CROSS_BINDIR GS_CROSS
 
-# pkgconf only, and only the sysroot's .pc directories (base and this repo,
-# then NextBSD X for cairo): never the build host's.
+# pkgconf only, and only the sysroot's .pc directories (base,
+# nextbsd-displayserver-support and this repo, then NextBSD X for cairo):
+# never the build host's. /usr/libdata/pkgconfig comes first, so while
+# nextbsd-xlibs still ships its own /usr/X11 copies of pixman, freetype,
+# fontconfig and expat (until nextbsd-xlibs#9), cairo resolves /usr's.
 export PKG_CONFIG=pkgconf
 export PKG_CONFIG_LIBDIR="$SYSROOT$PCDIR:$SYSROOT$X_PCDIR"
 export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
@@ -290,9 +295,9 @@ EOF
     DESTDIR="$COMP_ROOT" meson install -C "$COMP_BUILD" --no-rebuild
 }
 
-# The base's own files (compat, plus the nextbsd-xlibs artifact CI stages
-# under it), listed while the sysroot doesn't yet hold anything this script
-# installs, so stage can refuse a component that would overwrite one. A later
+# The base's own files (compat, plus the nextbsd-displayserver-support and
+# nextbsd-xlibs artifacts CI stages over it), listed while the sysroot doesn't
+# yet hold anything this script installs, so stage can refuse a component that would overwrite one. A later
 # partial run reuses the list.
 base_list() {
     BASE_LIST="$BUILD/base-files-$T.list"
@@ -306,7 +311,8 @@ base_list() {
 # stage <name>: tidy and check $COMP_ROOT, then copy it into $SYSROOT (for the
 # components after this one) and $DESTDIR (the artifact).
 #   - everything must be under the component's prefix ($COMP_PREFIX: /usr, or
-#     /usr/X11 for cairo), and nothing may replace a base or xlibs file;
+#     /usr/X11 for cairo), and nothing may replace a base,
+#     displayserver-support or xlibs file;
 #   - libtool .la files, docs and info manuals are dropped (man pages are kept);
 #   - .pc files move to the prefix's .pc directory ($COMP_PCDIR:
 #     /usr/libdata/pkgconfig, or /usr/X11/lib/pkgconfig) and must say
@@ -590,10 +596,13 @@ build_gnutls() {
 }
 
 # cairo — meson, into /usr/X11 (plan Q7: it needs X), beside nextbsd-xlibs.
-# From xlibs (staged in the sysroot by CI, never in this artifact): pixman,
-# freetype, fontconfig (with expat) and the X libraries (libX11, libXext,
-# libXrender, libxcb with xcb-render and xcb-shm). libpng from this repo, zlib
-# from base.
+# From nextbsd-displayserver-support, in /usr (E25): pixman, freetype and
+# fontconfig (with expat); from xlibs, in /usr/X11: the X libraries (libX11,
+# libXext, libXrender, libxcb with xcb-render and xcb-shm). Both are staged in
+# the sysroot by CI and never reach this artifact. libpng from this repo, zlib
+# from base. Until nextbsd-xlibs#9 xlibs also carries /usr/X11 copies of the
+# first four; pkgconf must resolve them in /usr/libdata/pkgconfig, which
+# CAIRO_DS_PCS checks.
 #   on:  the image, xlib (with XRender), xcb (with SHM), PNG, PDF, PostScript,
 #        SVG, script and tee surfaces; FreeType and fontconfig fonts.
 #   off: GLib, and with it cairo-gobject (plan D2 keeps GLib out); LZO (the
@@ -613,13 +622,22 @@ build_gnutls() {
 # after the X server attaches it).
 CAIRO_PCS="cairo cairo-png cairo-ft cairo-fc cairo-xlib cairo-xlib-xrender cairo-xcb
     cairo-xcb-shm cairo-pdf cairo-ps cairo-svg cairo-script cairo-tee cairo-script-interpreter"
+CAIRO_DS_PCS="pixman-1 freetype2 fontconfig expat"
 CAIRO_FEATURES="XLIB_SURFACE XLIB_XRENDER_SURFACE XCB_SURFACE XCB_SHM_FUNCTIONS PNG_FUNCTIONS
     FT_FONT FC_FONT PDF_SURFACE PS_SURFACE SVG_SURFACE SCRIPT_SURFACE TEE_SURFACE"
 
 build_cairo() {
     comp "cairo [meson cross, $X_PREFIX]"
-    [ -f "$SYSROOT$X_PCDIR/x11.pc" ] && [ -f "$SYSROOT$X_PCDIR/pixman-1.pc" ] \
+    local x="$DESTDIR$X_PREFIX" lib="$DESTDIR$X_PREFIX/lib/libcairo.so.2" n f log
+    [ -f "$SYSROOT$X_PCDIR/x11.pc" ] \
         || fail "cairo needs nextbsd-xlibs in $SYSROOT$X_PREFIX (CI stages its continuous artifact)"
+    for n in $CAIRO_DS_PCS; do
+        [ -f "$SYSROOT$PCDIR/$n.pc" ] \
+            || fail "cairo needs nextbsd-displayserver-support's $n.pc in $SYSROOT$PCDIR (CI stages its continuous artifact)"
+        f=$(pkgconf --path "$n") || fail "pkgconf cannot resolve $n"
+        [ "$f" = "$SYSROOT$PCDIR/$n.pc" ] || fail "pkgconf resolves $n to $f, not $SYSROOT$PCDIR/$n.pc"
+        note "pkgconf path: $n -> ${f#"$SYSROOT"} ($(pkgconf --modversion "$n"))"
+    done
     fresh_dirs cairo "$X_PREFIX"
     fetch cairo
     meson_build \
@@ -628,9 +646,19 @@ build_cairo() {
         -Dglib=disabled -Dlzo=disabled -Dspectre=disabled -Dsymbol-lookup=disabled \
         -Dquartz=disabled -Ddwrite=disabled -Dgtk2-utils=disabled \
         -Dtests=disabled -Dgtk_doc=false
+    # What meson got from pkgconf: pixman's and freetype's include directories
+    # are /usr's, not xlibs' /usr/X11 copies.
+    log="$COMP_BUILD/meson-logs/meson-log.txt"
+    for n in pixman-1 freetype2; do
+        grep -q -F -- "-I$SYSROOT$PREFIX/include/$n" "$log" \
+            || fail "cairo's meson setup did not take $n from $PREFIX/include/$n"
+        note "meson pkgconf cflags: -I$PREFIX/include/$n"
+    done
+    if grep -E -- "-I$SYSROOT$X_PREFIX/include/(pixman-1|freetype2)" "$log"; then
+        fail "cairo's meson setup took pixman or freetype from $X_PREFIX"
+    fi
     rm -rf "$COMP_ROOT$X_PREFIX/bin/cairo-trace" "$COMP_ROOT$X_PREFIX/lib/cairo"
     stage cairo
-    local x="$DESTDIR$X_PREFIX" lib="$DESTDIR$X_PREFIX/lib/libcairo.so.2" n f
     [ ! -e "$x/bin/cairo-trace" ] && [ ! -e "$x/lib/cairo" ] || fail "cairo-trace (GPL-3.0-or-later) was staged"
     soname_check libcairo.so libcairo.so.2
     soname_check libcairo-script-interpreter.so libcairo-script-interpreter.so.2
