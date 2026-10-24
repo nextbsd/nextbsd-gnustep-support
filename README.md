@@ -21,10 +21,11 @@ epic nextbsd/nextbsd#574.
    nor the FreeBSD base already provide. Gershwin-only libraries go to
    nextbsd-gershwin-support.
 2. **Pinned upstream release tarballs only**, each with its URL and SHA-256 in
-   `sources.lock`. No FreeBSD packages, ports or ports tools. NextBSD's changes
-   are a patch series in `patches/<name>/`, never edits to a vendored tree.
-3. **Upstream build systems** (autotools, CMake, meson, plain make) driven in
-   cross mode with the files in `cross/`; no reach-over makefiles.
+   `sources.lock`, downloaded at build time. No FreeBSD packages, ports or
+   ports tools. NextBSD's changes are a patch series in `patches/<name>/`.
+3. **Upstream build systems** (autotools, CMake, meson; giflib's own
+   Makefile) driven in cross mode with the files in `cross/`; no hand-written
+   replacement makefiles.
 4. **Installed into `/usr`** (plan Q7): libraries in `/usr/lib`, headers in
    `/usr/include`, `.pc` files in `/usr/libdata/pkgconfig`, with upstream
    sonames. Libraries that need X go to `/usr/X11` (cairo, nextbsd/nextbsd-gnustep-support#2).
@@ -61,81 +62,91 @@ covers only the harness in this repo.
 
 ## Layout
 
+Same layout as nextbsd-xlibs (wiki: Source-Repo-Conventions):
+
 ```
 build-gnustep-support.sh     cross-build driver: every component, or some by name
-sources.lock                 <name> <version> <sha256> <url> for every tarball
-patches/<name>/NNNN-*.patch  NextBSD's changes to a component, applied in order
-cross/cross-<arch>.cmake     CMake toolchain files (amd64, arm64)
-cross/cross-<arch>.ini       meson cross files (amd64, arm64; system = 'freebsd')
-.github/workflows/build.yml  CI: build both arches, publish `continuous` from main
+sources.lock                 name, version, SHA-256, URL of every upstream tarball
+patches/<name>/series        the patches for <name>, in the order applied
+patches/<name>/*.patch       one change each, with an Origin: header
+cross/meson/<arch>.ini       meson cross files (host_machine system = 'freebsd')
+cross/autotools/<arch>.site  autotools CONFIG_SITE files (cross compiler, pkgconf,
+cross/autotools/common.site    cache answers for checks that would run a program)
+cross/cmake/<arch>.cmake     CMake toolchain files (libjpeg-turbo, libsndfile, libtiff)
+.github/workflows/build.yml  CI: build both arches, publish `continuous`
 NOTICE.md                    per-component provenance and licence
 ```
 
-Each patch starts with a header saying where it comes from (upstream commit,
-bug report, or "NextBSD") and why it's needed, and applies with `patch -p1`
-from the top of the unpacked tarball. A component with no changes has no
-`patches/` directory.
+Nothing upstream is committed. `build-gnustep-support.sh` downloads into
+`.build/dl/`, unpacks into `.build/src/` and builds out of tree under `.build/`.
+The build refuses a patch directory without a `series` file, a `*.patch` not
+listed in it, and a patch without an `Origin:` line. No component needs a
+patch yet.
 
 ## Build model
 
 `build-gnustep-support.sh` runs inside the `nextbsd-kernel-toolchain`
-container with the compat `continuous` base staged as the cross sysroot, the
-same setup as `nextbsd-contrib`. It needs:
+container (the pinned clang/lld 19.1.7 in `/usr/lib/llvm-19`, meson, ninja,
+cmake, pkgconf, autotools) with compat's `continuous` base extracted as the
+sysroot. It needs:
 
 | Variable | Meaning |
 |---|---|
 | `T` | target: `amd64` or `arm64` |
 | `TA` | FreeBSD `TARGET_ARCH`: `amd64` or `aarch64` |
-| `SYSROOT` | the staged compat base (never written to) |
+| `SYSROOT` | the staged NextBSD base; scratch, since each component is installed into its `/usr` |
 | `CROSS_BINDIR` | the toolchain's clang, lld and LLVM binutils (set by the container image) |
-| `DESTDIR` | where to stage; default `/stage` |
+| `DESTDIR` | where to stage the artifact; default `/stage` |
 
-For each component the script downloads the tarball (cached in
-`.build/dist/`), checks its SHA-256 against `sources.lock`, unpacks it, applies
-`patches/<name>/`, and runs the upstream build out of tree with
-`--host=<triple>` (autotools) or the `cross/` files (CMake, meson). Configure
-checks that would run a test program get their answers as cache variables,
-commented where they're set.
+For each component, in `COMPONENTS` order, it:
 
-The components build on each other, so each one is installed twice:
+1. downloads the tarball named in `sources.lock`, refuses it unless the SHA-256
+   matches, and unpacks it;
+2. applies `patches/<name>/series`;
+3. runs the upstream build out of tree and installs it with `DESTDIR`:
+   - **autotools** in `--host=<triple>` mode with
+     `CONFIG_SITE=cross/autotools/<arch>.site`, `--with-sysroot`, shared only
+     (sqlite's autosetup `configure` gets the same file sourced into its
+     environment; giflib's plain Makefile gets its compiler from it);
+   - **CMake** with `cross/cmake/<arch>.cmake`;
+   - **meson** (cairo, nextbsd/nextbsd-gnustep-support#2) with two cross files:
+     one generated per run with the sysroot and LLVM paths, then
+     `cross/meson/<arch>.ini`, which declares `system = 'freebsd'` so
+     upstream's FreeBSD code paths apply;
+4. checks and tidies the install, then copies it into the sysroot, so later
+   components find it, and into `DESTDIR`.
 
-- **in full into a working sysroot**, `.build/sysroot-<arch>`, a hard-linked
-  copy of `$SYSROOT`. Later components find its headers, libraries and `.pc`
-  files there. pkgconf reads only that sysroot's `/usr/libdata/pkgconfig`,
-  never the runner's;
-- **the shipped subset into `$DESTDIR`**: the shared libraries and their
-  development links, headers and `.pc` files (Gershwin builds GNUstep on the
-  machine, so the development files ship), stripped and mode 0444 as FreeBSD
-  base installs them. No static libraries, libtool archives, programs, docs or
-  man pages.
-
-The script fails if a shipped path already exists in the compat base, if a
-library's soname differs from upstream's, if a `.pc` file names a build path
-or `/usr/local`, or if a shipped `.pc` doesn't resolve with pkgconf.
+**Checks the build enforces:** everything installs under `/usr` and nothing
+replaces a file of the compat base; no `.la` files, docs or info manuals; `.pc`
+files are moved to `/usr/libdata/pkgconfig`, have `prefix=/usr`, and name
+neither `/usr/local` nor a build path; every library has its upstream soname
+and the `DT_NEEDED` entries it should (cross `readelf -d`); each `.pc` resolves
+through pkgconf with its dependencies. pkgconf searches only the sysroot
+(`/usr/libdata/pkgconfig`, then `/usr/X11/lib/pkgconfig` for cairo) with
+`PKG_CONFIG_SYSROOT_DIR` set, so nothing from the Linux host leaks into a build.
 
 ```
-./build-gnustep-support.sh            # every component, fresh working sysroot
-./build-gnustep-support.sh gnutls     # one component, reusing the working sysroot
+./build-gnustep-support.sh            # every component
+./build-gnustep-support.sh gnutls     # one component; its dependencies must
+                                      # already be in $SYSROOT/usr
 ```
-
-Nothing here links against nextbsd-userland: these components need only the
-compat base. Components that need X (cairo) will stage nextbsd-xlibs'
-`continuous` artifact into the sysroot as well.
 
 ### Host build tools
 
 Build-time only, never shipped. meson, ninja, cmake, pkgconf and the autotools
 come from the toolchain image. **NASM** (libjpeg-turbo's x86-64 SIMD) isn't in
-the image yet, so the script builds it on the runner from the pinned tarball
-in `sources.lock`; it can move into the image later without changing anything
-else. gperf, which the plan lists, isn't needed by any component here yet
-(GnuTLS ships its generated files).
+the image yet, so the script builds it on the runner from the tarball pinned in
+`sources.lock`; it can move into the image later without changing anything
+else. gperf, which the plan lists, isn't needed by any component here (GnuTLS
+ships its generated files).
 
 ## CI, artifact, package
 
-The workflow builds both arches on every pull request. A push to `main`, or a
-manual run on `main`, also publishes `nextbsd-gnustep-support-<arch>.tar.gz`
-to the `continuous` release, rooted at `/`. Pull requests never publish.
+The workflow builds both arches on pull requests, pushes to `main` and manual
+runs. A push to `main`, or a manual run from `main`, also publishes
+`nextbsd-gnustep-support-<arch>.tar.gz` to the `continuous` release, rooted at
+`/`: the whole install, headers, `.pc` files and man pages included (Gershwin
+builds GNUstep on the machine, plan D10/D11). Pull requests never publish.
 
 Builds run by hand, in order, after the repos they depend on (the rebuild
 policy): there is no `repository_dispatch` trigger, and this repo dispatches
@@ -147,8 +158,10 @@ nothing to any other repo. `nextbsd-pkg` repackages the tarball as
 1. A line in `sources.lock`: name, version, the tarball's SHA-256, its URL.
 2. `build_<name>()` in `build-gnustep-support.sh` (hyphens become
    underscores), registered in `COMPONENTS` in build order. End it with
-   `publish` and `soname_check`/`needed_check` for what it installs.
-3. Patches, if any, in `patches/<name>/` with a provenance header each.
+   `stage` and `soname_check`/`needed_check`/`pc_check` for what it installs.
+3. Patches, if any, in `patches/<name>/`, listed in `patches/<name>/series`,
+   each with an `Origin:` header (upstream commit or MR, a FreeBSD port file
+   used as a reference, or `NextBSD`).
 4. A row in `NOTICE.md` and in the table above.
 5. Turn off every D-Bus, Avahi or GLib option the component has, and
    say so in the function's comment.

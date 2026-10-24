@@ -7,7 +7,7 @@ provenance and does not relicense anything. NextBSD's changes, if any, are in
 `patches/<name>/` and are under the licence of the component they change.
 
 The top-level **`LICENSE` (BSD 2-Clause)** covers only what this repo authors:
-`build-gnustep-support.sh`, `cross/`, `.github/workflows/`, this `NOTICE.md`
+`build-gnustep-support.sh`, `sources.lock`, `cross/`, `.github/workflows/`, this `NOTICE.md`
 and `README.md`.
 
 ## Shipped in `NextBSD-gnustep-support`

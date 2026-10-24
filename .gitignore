@@ -1,2 +1,3 @@
-# Out-of-tree build, download cache and staging scratch from build-gnustep-support.sh.
+# Downloads, extracted sources, out-of-tree builds, generated cross files and
+# the host NASM from build-gnustep-support.sh.
 .build/
