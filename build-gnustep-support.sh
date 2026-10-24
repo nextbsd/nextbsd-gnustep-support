@@ -405,6 +405,9 @@ build_libao() {
     autotools_build \
         --disable-pulse --disable-esd --disable-arts --disable-nas \
         --disable-alsa --disable-alsa-mmap --without-x
+    # ckport/db/libao.ckport is metadata for RoarAudio's ckport tool, which
+    # NextBSD doesn't ship.
+    rm -rf "$COMP_ROOT$PREFIX/lib/ckport"
     stage libao
     soname_check libao.so libao.so.4
     [ -f "$DESTDIR$PREFIX/lib/ao/plugins-4/liboss.so" ] || fail "libao's OSS plugin was not staged"

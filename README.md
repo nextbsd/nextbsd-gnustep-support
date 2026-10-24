@@ -49,7 +49,7 @@ Built in this order (plan step 9):
 | libao | 1.2.0 | autotools, OSS plugin only | `libao.so.4`, `ao/plugins-4/liboss.so`, `ao.pc` | nextbsd/nextbsd-gnustep-support#1 |
 | sqlite | 3.54.1 | autosetup, library only | `libsqlite3.so.0`, `sqlite3.pc` | nextbsd/nextbsd-gnustep-support#1 |
 | libtiff | 4.7.2 | CMake: jpeg, zlib, lzma | `libtiff.so.6`, `libtiff-4.pc` | nextbsd/nextbsd-gnustep-support#1 |
-| nettle | 3.10.2 | autotools, fat | `libnettle.so.8`, `libhogweed.so.6` | nextbsd/nextbsd-gnustep-support#1 |
+| nettle | 3.10.2 | autotools, fat | `libnettle.so.8`, `libhogweed.so.6`, its small tools (`nettle-hash`, `pkcs1-conv`, `sexp-conv`, ...) | nextbsd/nextbsd-gnustep-support#1 |
 | GnuTLS | 3.8.13 | autotools, minimal | `libgnutls.so.30`, `gnutls.pc` | nextbsd/nextbsd-gnustep-support#1 |
 
 GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
