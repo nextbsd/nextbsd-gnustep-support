@@ -26,6 +26,8 @@ and `README.md`.
 | GnuTLS | gnutls.org | 3.8.13 | LGPL-2.1-or-later for `libgnutls` (`COPYING.LESSERv2`, `README.md`); the tools, tests and `libgnutls-openssl`, which are GPL-3.0-or-later, aren't built |
 | ↳ libtasn1 (bundled in GnuTLS, `lib/minitasn1`) | gnu.org/software/libtasn1 | as bundled in GnuTLS 3.8.13 | LGPL-2.1-or-later (file headers) |
 | ↳ libunistring (bundled in GnuTLS, `lib/unistring`) | gnu.org/software/libunistring | as bundled in GnuTLS 3.8.13 | LGPL-3.0-or-later or GPL-2.0-or-later (file headers) |
+| flite | github.com/festvox/flite (tag `v2.2`) | 2.2 | CMU Flite licence: BSD-style, with the conditions that modifications be marked as such and that authors' names not be removed or used for endorsement; a few files (`src/cg/cst_mlpg.*`, `src/regex/*`, `src/speech/rateconv.c`, `src/speech/g72*`, parts of `lang/usenglish`) under similar permissive terms of their own (`COPYING`). NextBSD's changes are marked in `patches/flite/` |
+| FFmpeg | ffmpeg.org | 9.0.2 | LGPL-2.1-or-later (`LICENSE.md`, `COPYING.LGPLv2.1`). Built without `--enable-gpl`, `--enable-version3` or `--enable-nonfree`, so no GPL or (L)GPLv3 code is compiled in; configure reports "LGPL version 2.1 or later" and the build checks it |
 
 **libao is GPL-2.0-or-later,** not LGPL. Anything that links it (gnustep-gui's
 `AudioOutput` sound bundle, Gershwin's Player) is a combined work under the GPL

@@ -179,6 +179,10 @@ apply_patches() {
     note "$n patch(es) applied"
 }
 
+# csv_list <words...>: the words joined with commas (component lists for
+# configure options).
+csv_list() { local IFS=,; echo "$*"; }
+
 # Fresh out-of-tree build and install-root directories for a component.
 fresh_dirs() {
     local name="$1"
@@ -269,15 +273,16 @@ stage() {
     [ -z "$clash" ] || fail "$name would replace files of the NextBSD base: $clash"
     (cd "$COMP_ROOT" && tar -cf - .) | (cd "$SYSROOT" && tar -xf -)
     (cd "$COMP_ROOT" && tar -cf - .) | (cd "$DESTDIR" && tar -xf -)
-    note "staged $(cd "$COMP_ROOT" && find . ! -type d | wc -l) files"
+    note "staged $(cd "$COMP_ROOT" && find . ! -type d | wc -l) files, $(du -sk --apparent-size "$COMP_ROOT" | cut -f1) KiB"
 }
 
 # =============================================================================
 # Host build tools (built on the runner, never shipped)
 # =============================================================================
-# NASM for libjpeg-turbo's x86-64 SIMD (amd64 only; arm64's Neon code uses
-# compiler intrinsics). Pinned in sources.lock and built with the runner's cc
-# until the toolchain image carries it.
+# NASM for libjpeg-turbo's x86-64 SIMD and FFmpeg's x86-64 assembly (amd64
+# only; on arm64 libjpeg-turbo's Neon code uses compiler intrinsics and
+# FFmpeg's is GNU-syntax assembly clang builds). Pinned in sources.lock and
+# built with the runner's cc until the toolchain image carries it.
 host_nasm() {
     NASM="$BUILD/host/bin/nasm"
     if [ -x "$NASM" ] && "$NASM" -v | grep -q "version $(lock_field nasm version) "; then
@@ -297,7 +302,8 @@ host_nasm() {
 
 # =============================================================================
 # Components, in build order (plan step 9): giflib, jpeg, png, gmp,
-# libsndfile, libao, sqlite; then libtiff (jpeg) and nettle (gmp); then GnuTLS.
+# libsndfile, libao, sqlite; then libtiff (jpeg) and nettle (gmp); then GnuTLS;
+# then flite and FFmpeg.
 # No component has a D-Bus, Avahi or GLib option left on.
 # =============================================================================
 
@@ -513,13 +519,170 @@ build_gnutls() {
     pc_check gnutls "$VERSION"
 }
 
+# flite — its own autoconf configure and makefiles, which build in the source
+# tree only. One voice, cmu_us_kal16 (plan Q6): gnustep-gui's speech server
+# (Tools/speech/FliteSpeechEngine.m) registers that voice and no other, and
+# gnustep-gui's configure builds the `speech` and `say` tools only when
+# -lflite_cmu_us_kal16 links. patches/flite adds config/nextbsd.lv (that voice,
+# the usenglish language and the cmulex lexicon) and turns on flite's shared
+# libraries for BSD targets. Output is OSS (/dev/dsp), like libao's.
+# flite's `make install` also installs its static archives and three programs
+# that each link the whole voice statically (and expects flite_time, which
+# needs another voice), so the headers and shared libraries are installed with
+# the same two commands its install rules use (top-level Makefile and
+# main/Makefile). No .pc file: gnustep-gui finds flite with AC_CHECK_LIB.
+build_flite() {
+    comp "flite [autoconf cross, in tree]"
+    fresh_dirs flite
+    fetch flite
+    local plat libdir
+    (
+        cd "$SRC_DIR"
+        CONFIG_SITE="$GS_CROSS/autotools/$T.site" \
+        ./configure \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix="$PREFIX" --libdir="$PREFIX/lib" \
+            --enable-shared --with-audio=oss \
+            --with-langvox=nextbsd --with-lang=usenglish --with-lex=cmulex \
+            --with-vox=cmu_us_kal16
+        grep -qx 'SHFLAGS  = -fPIC' config/config || fail "flite: configure did not turn on shared libraries"
+        grep -qx 'AUDIODRIVER = oss' config/config || fail "flite: configure did not pick OSS output"
+        make $JOBS
+    )
+    plat=$(cd "$SRC_DIR/build" && echo *)
+    libdir="$SRC_DIR/build/$plat/lib"
+    mkdir -p "$COMP_ROOT$PREFIX/include/flite" "$COMP_ROOT$PREFIX/lib"
+    install -m 644 "$SRC_DIR"/include/*.h "$COMP_ROOT$PREFIX/include/flite/"
+    cp -pP "$libdir"/*.so "$libdir"/*.so.* "$COMP_ROOT$PREFIX/lib/"
+    stage flite
+    local l
+    for l in flite flite_cmulex flite_usenglish flite_cmu_us_kal16; do
+        soname_check "lib$l.so" "lib$l.so.1"
+    done
+    needed_check "$DESTDIR$PREFIX/lib/libflite.so.1" libm.so
+    needed_check "$DESTDIR$PREFIX/lib/libflite_cmu_us_kal16.so.1" libflite_usenglish.so.1
+    needed_check "$DESTDIR$PREFIX/lib/libflite_cmu_us_kal16.so.1" libflite_cmulex.so.1
+    needed_check "$DESTDIR$PREFIX/lib/libflite_cmu_us_kal16.so.1" libflite.so.1
+    "$READELF" --dyn-syms "$DESTDIR$PREFIX/lib/libflite_cmu_us_kal16.so.1" | grep -q ' register_cmu_us_kal16$' \
+        || fail "libflite_cmu_us_kal16 does not export register_cmu_us_kal16"
+    if find "$DESTDIR$PREFIX/lib" -name 'libflite_*' | grep -v -E '/libflite_(cmulex|usenglish|cmu_us_kal16)\.so'; then
+        fail "flite libraries other than the one voice, its language and lexicon were staged"
+    fi
+    test -f "$DESTDIR$PREFIX/include/flite/flite.h" || fail "flite/flite.h not staged"
+}
+
+# FFmpeg — its own configure (not autoconf), out of tree, in cross mode. Plan
+# Q6: LGPL only (no --enable-gpl, --enable-version3 or --enable-nonfree), no
+# external libraries at all (--disable-autodetect: no zlib, iconv, SDL, X,
+# VA-API, Vulkan, ALSA/PulseAudio; nothing that could bring D-Bus or Avahi), no
+# network (no http/tcp/rtsp, no avahi or mDNS), no documentation. Components
+# start from --disable-everything:
+#   - decoders, demuxers and parsers for local playback of the common audio
+#     and video formats, by FFmpeg's own decoders: what gnustep-gui's NSMovie
+#     and NSSound (GSAudioPlayer), libs-av and Gershwin's Player open;
+#   - protocols file and pipe;
+#   - one encoder and one muxer, raw 32-bit float PCM, for Whisper, which runs
+#     `ffmpeg -i <file> -f f32le -acodec pcm_f32le -ar 16000 -ac 1 pipe:1`;
+#   - the OSS input device: Whisper records with `ffmpeg -f oss -i /dev/dsp`;
+#   - the filters the ffmpeg command needs (resampling, format conversion, and
+#     those it selects itself).
+# Libraries libavutil, libavcodec, libavformat, libavdevice, libavfilter,
+# libswscale and libswresample with upstream sonames, and the `ffmpeg`
+# command; no ffprobe or ffplay (which needs SDL). x86-64 assembly with NASM;
+# aarch64's Neon assembly through clang.
+FFMPEG_DECODERS="aac ac3 eac3 alac flac mp1float mp2float mp3float opus vorbis
+    pcm_s8 pcm_u8 pcm_s16le pcm_s16be pcm_s24le pcm_s24be pcm_s32le pcm_s32be
+    pcm_f32le pcm_f32be pcm_f64le pcm_f64be pcm_alaw pcm_mulaw adpcm_ima_wav adpcm_ms
+    h264 hevc vp8 vp9 mpeg4 h263 mpeg1video mpeg2video mjpeg theora"
+FFMPEG_DEMUXERS="mov matroska ogg wav aiff caf au flac mp3 aac ac3 eac3 avi mpegps mpegts"
+FFMPEG_PARSERS="aac ac3 flac mpegaudio opus vorbis h264 hevc vp8 vp9 mpeg4video mpegvideo mjpeg h263"
+FFMPEG_PROTOCOLS="file pipe"
+FFMPEG_ENCODERS="pcm_f32le"
+FFMPEG_MUXERS="pcm_f32le"
+FFMPEG_INDEVS="oss"
+FFMPEG_FILTERS="aresample aformat anull format null scale"
+
+build_ffmpeg() {
+    comp "ffmpeg [configure cross]"
+    local arch asm=()
+    case "$T" in
+        amd64) arch=x86_64; host_nasm; asm=(--x86asmexe="$NASM") ;;
+        arm64) arch=aarch64 ;;
+    esac
+    fresh_dirs ffmpeg
+    fetch ffmpeg
+    (
+        # shellcheck source=/dev/null
+        . "$GS_CROSS/autotools/$T.site"
+        cd "$COMP_BUILD"
+        "$SRC_DIR/configure" \
+            --enable-cross-compile --target-os=freebsd --arch="$arch" \
+            --cc="$CC" --cxx="$CXX" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" \
+            --strip="$STRIP" --pkg-config=pkgconf --host-cc="$CC_FOR_BUILD" \
+            "${asm[@]}" \
+            --prefix="$PREFIX" --libdir="$PREFIX/lib" --shlibdir="$PREFIX/lib" \
+            --incdir="$PREFIX/include" --pkgconfigdir="$PCDIR" \
+            --enable-shared --disable-static --enable-pic --disable-debug \
+            --disable-gpl --disable-version3 --disable-nonfree \
+            --disable-autodetect --enable-pthreads --disable-network --disable-doc \
+            --disable-programs --enable-ffmpeg \
+            --disable-everything \
+            --enable-decoder="$(csv_list $FFMPEG_DECODERS)" \
+            --enable-demuxer="$(csv_list $FFMPEG_DEMUXERS)" \
+            --enable-parser="$(csv_list $FFMPEG_PARSERS)" \
+            --enable-protocol="$(csv_list $FFMPEG_PROTOCOLS)" \
+            --enable-encoder="$(csv_list $FFMPEG_ENCODERS)" \
+            --enable-muxer="$(csv_list $FFMPEG_MUXERS)" \
+            --enable-indev="$(csv_list $FFMPEG_INDEVS)" \
+            --enable-filter="$(csv_list $FFMPEG_FILTERS)"
+        # The licence and the switches the plan asks for, as configure
+        # resolved them.
+        grep -qx '#define FFMPEG_LICENSE "LGPL version 2.1 or later"' config.h \
+            || fail "FFmpeg is not configured LGPL-2.1-or-later: $(grep FFMPEG_LICENSE config.h)"
+        local c
+        for c in GPL VERSION3 NONFREE NETWORK ZLIB ICONV; do
+            grep -qx "#define CONFIG_$c 0" config.h || fail "FFmpeg: CONFIG_$c is not 0"
+        done
+        grep -qx '#define CONFIG_OSS_INDEV 1' config.h || fail "FFmpeg: the OSS input device is not enabled"
+        grep -qx '#define HAVE_PTHREADS 1' config.h || fail "FFmpeg: pthreads are not enabled"
+        make $JOBS
+        # The libraries, headers, .pc files and the ffmpeg command; not
+        # install-data (libx264/libvpx presets for encoders that aren't built).
+        make install-progs install-headers DESTDIR="$COMP_ROOT"
+    )
+    stage ffmpeg
+    soname_check libavutil.so libavutil.so.61
+    soname_check libavcodec.so libavcodec.so.63
+    soname_check libavformat.so libavformat.so.63
+    soname_check libavdevice.so libavdevice.so.63
+    soname_check libavfilter.so libavfilter.so.12
+    soname_check libswscale.so libswscale.so.10
+    soname_check libswresample.so libswresample.so.7
+    local bin="$DESTDIR$PREFIX/bin/ffmpeg" l f
+    [ -x "$bin" ] || fail "the ffmpeg command was not staged"
+    for l in libavdevice.so.63 libavfilter.so.12 libavformat.so.63 libavcodec.so.63 \
+             libswresample.so.7 libswscale.so.10 libavutil.so.61; do
+        needed_check "$bin" "$l"
+    done
+    # Nothing outside FFmpeg's own libraries and the base's libc, libm, libthr
+    # and libgcc_s.
+    for f in "$bin" "$DESTDIR$PREFIX"/lib/lib{avutil,avcodec,avformat,avdevice,avfilter,swscale,swresample}.so; do
+        if "$READELF" -d "$f" | grep NEEDED | grep -v -E '\[lib(av(util|codec|format|device|filter)|sw(scale|resample)|c|m|thr|gcc_s)\.so'; then
+            fail "$(basename "$f") links a library outside FFmpeg and the base"
+        fi
+    done
+    for l in libavutil libavcodec libavformat libavdevice libavfilter libswscale libswresample; do
+        pc_check "$l"
+    done
+}
+
 # =============================================================================
 # driver
 # =============================================================================
 # Add a component: pin it in sources.lock, write build_<name>() above (hyphens
 # in the name become underscores in the function), put its patches, if any, in
 # patches/<name>/ with a series file, and append <name> here in build order.
-COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls"
+COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls flite ffmpeg"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do

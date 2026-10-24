@@ -1,0 +1,3 @@
+# flite 2.2 (sources.lock). Applied in order by build-gnustep-support.sh.
+0001-nextbsd-langvox-one-voice.patch
+0002-configure-shared-on-bsd.patch
