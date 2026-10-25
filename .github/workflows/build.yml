@@ -4,8 +4,8 @@ name: Build NextBSD gnustep-support (libraries GNUstep needs)
 # nextbsd/nextbsd#574) into /usr (cairo, which needs X, into /usr/X11) for
 # amd64 and arm64 on the x86_64 runner, inside the per-arch
 # nextbsd-kernel-toolchain container, against compat's `continuous` base with
-# nextbsd-xlibs' `continuous` artifact on top as the sysroot, from the pinned
-# tarballs in sources.lock.
+# nextbsd-displayserver-support's and nextbsd-xlibs' `continuous` artifacts on
+# top as the sysroot, from the pinned tarballs in sources.lock.
 # Same shape as nextbsd-xlibs (wiki: Source-Repo-Conventions).
 #
 # Builds run by hand, in order, after their upstream repos (rebuild policy):
@@ -48,13 +48,18 @@ jobs:
       # Stage the cross sysroot, in the order the repos build:
       #   1. compat's base: libc, libm, libthr, zlib, liblzma, headers and
       #      /usr/libdata/pkgconfig;
-      #   2. nextbsd-xlibs, in /usr/X11: the X libraries, pixman, freetype,
-      #      fontconfig and expat, for cairo.
-      # Both are build input only: the artifact is /stage, which holds only
+      #   2. nextbsd-displayserver-support, in /usr: pixman, freetype,
+      #      fontconfig and expat (with libdrm, libxkbcommon and the input
+      #      stack), .pc files in /usr/libdata/pkgconfig, for cairo (E25);
+      #   3. nextbsd-xlibs, in /usr/X11: the X libraries, for cairo. Until
+      #      nextbsd-xlibs#9 it still carries its own /usr/X11 copies of
+      #      pixman, freetype, fontconfig and expat (same versions); pkgconf
+      #      searches /usr/libdata/pkgconfig first, so cairo uses /usr's.
+      # All are build input only: the artifact is /stage, which holds only
       # what build-gnustep-support.sh installs. All public reads, so the
       # built-in token is enough and fork PRs work. build-gnustep-support.sh
       # installs each component into this sysroot as it goes.
-      - name: Stage sysroot from compat and xlibs continuous
+      - name: Stage sysroot from compat, displayserver-support and xlibs continuous
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -64,10 +69,14 @@ jobs:
             --pattern "nextbsd-base-${{ matrix.arch }}.tar.gz" \
             --output /tmp/base.tar.gz --clobber
           gh release download continuous \
+            --repo nextbsd/nextbsd-displayserver-support \
+            --pattern "nextbsd-displayserver-support-${{ matrix.arch }}.tar.gz" \
+            --output /tmp/displayserver-support.tar.gz --clobber
+          gh release download continuous \
             --repo nextbsd/nextbsd-xlibs \
             --pattern "nextbsd-xlibs-${{ matrix.arch }}.tar.gz" \
             --output /tmp/xlibs.tar.gz --clobber
-          for t in base xlibs; do
+          for t in base displayserver-support xlibs; do
             tar -C "$GITHUB_WORKSPACE/sysroot" -xzf "/tmp/$t.tar.gz"
           done
 

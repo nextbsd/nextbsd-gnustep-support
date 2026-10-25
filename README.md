@@ -10,7 +10,8 @@ epic nextbsd/nextbsd#574.
 | Repo | What it holds | Package |
 |---|---|---|
 | `nextbsd-userland` | Darwin sources, plus Apple's libxml2, libxslt, libffi and curl, and ICU 76.1 | `NextBSD-userland` |
-| `nextbsd-xlibs` | the X client libraries, pixman, freetype, fontconfig | `NextBSD-xlibs` |
+| `nextbsd-displayserver-support` | libdrm, pixman, expat, freetype, fontconfig, libxkbcommon, the input stack (in `/usr`) | `NextBSD-displayserver-support` |
+| `nextbsd-xlibs` | the X client libraries | `NextBSD-xlibs` |
 | **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg** | **`NextBSD-gnustep-support`** |
 | `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool, squashfs) | `NextBSD-gershwin-support` |
 
@@ -64,10 +65,15 @@ off. It trusts `/etc/ssl/certs`, the directory base OpenSSL uses.
 
 cairo (gnustep-back's cairo backend) needs X, so it installs into `/usr/X11`
 (plan Q7), the only component here that does. It builds against
-nextbsd-xlibs, whose `continuous` artifact CI unpacks into the sysroot as
-build input only (never into this repo's artifact): pixman, freetype,
-fontconfig, expat and the X libraries (libX11, libXext, libXrender, libxcb).
-libpng comes from this repo and zlib from base. On: the image, xlib (with
+nextbsd-displayserver-support (pixman, freetype, fontconfig and expat, in
+`/usr`) and nextbsd-xlibs (the X libraries: libX11, libXext, libXrender,
+libxcb, in `/usr/X11`), whose `continuous` artifacts CI unpacks into the
+sysroot as build input only (never into this repo's artifact). libpng comes
+from this repo and zlib from base. Until nextbsd-xlibs#9 drops them, xlibs
+still carries `/usr/X11` copies of pixman, freetype, fontconfig and expat
+(same versions); the build checks that pkgconf resolves those four in
+`/usr/libdata/pkgconfig` and that meson took pixman's and freetype's headers
+from `/usr/include`. On: the image, xlib (with
 XRender), xcb (with SHM), PNG, PDF, PostScript, SVG, script and tee surfaces,
 FreeType and fontconfig fonts. Off: GLib (so no cairo-gobject), LZO, xlib-xcb,
 Quartz, DirectWrite, libspectre, the bfd symbol lookup, the GTK utilities,
@@ -128,15 +134,17 @@ patches.
 
 `build-gnustep-support.sh` runs inside the `nextbsd-kernel-toolchain`
 container (the pinned clang/lld 19.1.7 in `/usr/lib/llvm-19`, meson, ninja,
-cmake, pkgconf, autotools) with compat's `continuous` base and nextbsd-xlibs'
-`continuous` artifact (`/usr/X11`, for cairo) extracted as the sysroot. The
-xlibs files are build input only; they never reach `DESTDIR`. It needs:
+cmake, pkgconf, autotools) with compat's `continuous` base, then
+nextbsd-displayserver-support's (`/usr`) and nextbsd-xlibs' (`/usr/X11`)
+`continuous` artifacts, both for cairo, extracted as the sysroot in that
+order. The displayserver-support and xlibs files are build input only; they
+never reach `DESTDIR`. It needs:
 
 | Variable | Meaning |
 |---|---|
 | `T` | target: `amd64` or `arm64` |
 | `TA` | FreeBSD `TARGET_ARCH`: `amd64` or `aarch64` |
-| `SYSROOT` | the staged NextBSD base with nextbsd-xlibs; scratch, since each component is installed into it |
+| `SYSROOT` | the staged NextBSD base with nextbsd-displayserver-support and nextbsd-xlibs; scratch, since each component is installed into it |
 | `CROSS_BINDIR` | the toolchain's clang, lld and LLVM binutils (set by the container image) |
 | `DESTDIR` | where to stage the artifact; default `/stage` |
 
@@ -163,7 +171,7 @@ For each component, in `COMPONENTS` order, it:
 
 **Checks the build enforces:** everything installs under the component's
 prefix (`/usr`, or `/usr/X11` for cairo) and nothing replaces a file of the
-compat base or nextbsd-xlibs; no `.la` files, docs or info manuals; `.pc` files
+compat base, nextbsd-displayserver-support or nextbsd-xlibs; no `.la` files, docs or info manuals; `.pc` files
 are moved to the prefix's directory (`/usr/libdata/pkgconfig`, or
 `/usr/X11/lib/pkgconfig`), have that `prefix=`, and name neither `/usr/local`
 nor a build path; every library has its upstream soname and the `DT_NEEDED`
@@ -196,8 +204,8 @@ runs. A push to `main`, or a manual run from `main`, also publishes
 `/`: the whole install, headers, `.pc` files and man pages included (Gershwin
 builds GNUstep on the machine, plan D10/D11). Pull requests never publish.
 
-Builds run by hand, in order, after the repos they depend on (compat and
-nextbsd-xlibs; the rebuild policy): there is no `repository_dispatch` trigger, and this repo dispatches
+Builds run by hand, in order, after the repos they depend on (compat,
+nextbsd-displayserver-support and nextbsd-xlibs; the rebuild policy): there is no `repository_dispatch` trigger, and this repo dispatches
 nothing to any other repo. `nextbsd-pkg` repackages the tarball as
 `NextBSD-gnustep-support` when it is run by hand (nextbsd/nextbsd-pkg#27).
 
