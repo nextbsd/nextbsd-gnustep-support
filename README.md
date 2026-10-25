@@ -189,12 +189,11 @@ each `.pc` resolves through pkgconf with its dependencies. pkgconf searches only
 
 ### Host build tools
 
-Build-time only, never shipped. meson, ninja, cmake, pkgconf and the autotools
-come from the toolchain image. **NASM** (libjpeg-turbo's x86-64 SIMD and
-FFmpeg's x86-64 assembly) isn't in the image yet, so the script builds it on
-the runner from the tarball pinned in `sources.lock`; it can move into the
-image later without changing anything else. gperf, which the plan lists, isn't needed by any component here (GnuTLS
-ships its generated files).
+Build-time only, never shipped. They all come from the toolchain image:
+meson, ninja, cmake, pkgconf, the autotools, and **NASM 3.02** (libjpeg-turbo's
+x86-64 SIMD and FFmpeg's x86-64 assembly, nextbsd/nextbsd-toolchain#23). The
+script checks that the image's `nasm` is that version. gperf, which the plan
+lists, isn't needed by any component here (GnuTLS ships its generated files).
 
 ## CI, artifact, package
 

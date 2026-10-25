@@ -34,9 +34,3 @@ and `README.md`.
 `AudioOutput` sound bundle, Gershwin's Player) is a combined work under the GPL
 when distributed. The plan (E24, audit 2) keeps libao because gnustep-gui only
 builds NSSound with both libsndfile and libao.
-
-## Build-time only (never shipped)
-
-| Tool | Upstream | Version | Licence |
-|---|---|---|---|
-| NASM | nasm.us | 3.02 | BSD 2-Clause (`LICENSE`) |
