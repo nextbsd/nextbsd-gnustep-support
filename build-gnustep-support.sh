@@ -353,27 +353,19 @@ stage() {
 }
 
 # =============================================================================
-# Host build tools (built on the runner, never shipped)
+# Host build tools (from the toolchain image, never shipped)
 # =============================================================================
 # NASM for libjpeg-turbo's x86-64 SIMD and FFmpeg's x86-64 assembly (amd64
 # only; on arm64 libjpeg-turbo's Neon code uses compiler intrinsics and
-# FFmpeg's is GNU-syntax assembly clang builds). Pinned in sources.lock and
-# built with the runner's cc until the toolchain image carries it.
+# FFmpeg's is GNU-syntax assembly clang builds). The toolchain image builds
+# NASM from its pinned upstream tarball into /usr/local/bin
+# (nextbsd-toolchain#23); this is the version it pins.
+NASM_VERSION=3.02
 host_nasm() {
-    NASM="$BUILD/host/bin/nasm"
-    if [ -x "$NASM" ] && "$NASM" -v | grep -q "version $(lock_field nasm version) "; then
-        return 0
-    fi
-    comp "nasm $(lock_field nasm version) [host tool]"
-    fetch nasm
-    (
-        cd "$SRC_DIR"
-        ./configure --prefix="$BUILD/host" >/dev/null
-        make $JOBS nasm
-    )
-    mkdir -p "$BUILD/host/bin"
-    install -m 0755 "$SRC_DIR/nasm" "$NASM"
-    note "$("$NASM" -v)"
+    NASM=$(command -v nasm) || fail "nasm not found; the toolchain image provides NASM $NASM_VERSION (nextbsd-toolchain#23)"
+    "$NASM" -v | grep -q "^NASM version $NASM_VERSION " \
+        || fail "$NASM is not NASM $NASM_VERSION: $("$NASM" -v)"
+    note "host tool: $("$NASM" -v) ($NASM)"
 }
 
 # =============================================================================
