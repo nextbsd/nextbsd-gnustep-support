@@ -132,7 +132,7 @@ patches.
 
 ## Build model
 
-`build-gnustep-support.sh` runs inside the `nextbsd-kernel-toolchain`
+`build-gnustep-support.sh` runs inside the `nextbsd-toolchain`
 container (the pinned clang/lld 19.1.7 in `/usr/lib/llvm-19`, meson, ninja,
 cmake, pkgconf, autotools) with compat's `continuous` base, then
 nextbsd-displayserver-support's (`/usr`) and nextbsd-xlibs' (`/usr/X11`)
