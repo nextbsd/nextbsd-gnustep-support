@@ -3,7 +3,7 @@ name: Build NextBSD gnustep-support (libraries GNUstep needs)
 # Cross-builds the support libraries GNUstep needs on NextBSD (E24,
 # nextbsd/nextbsd#574) into /usr (cairo, which needs X, into /usr/X11) for
 # amd64 and arm64 on the x86_64 runner, inside the per-arch
-# nextbsd-kernel-toolchain container, against compat's `continuous` base with
+# nextbsd-toolchain container, against compat's `continuous` base with
 # nextbsd-displayserver-support's and nextbsd-xlibs' `continuous` artifacts on
 # top as the sysroot, from the pinned tarballs in sources.lock.
 # Same shape as nextbsd-xlibs (wiki: Source-Repo-Conventions).
@@ -41,7 +41,7 @@ jobs:
       # Per-arch toolchain image: the pinned llvmorg-19.1.7 clang, lld and LLVM
       # binutils at $CROSS_BINDIR, plus meson, ninja, cmake, pkgconf and the
       # autotools (nextbsd-toolchain#13). Nothing is apt-installed here.
-      image: ghcr.io/nextbsd/nextbsd-kernel-toolchain:${{ matrix.arch }}-${{ inputs.fbsd_sha && format('fbsd-{0}', inputs.fbsd_sha) || 'latest' }}
+      image: ghcr.io/nextbsd/nextbsd-toolchain:${{ matrix.arch }}-${{ inputs.fbsd_sha && format('fbsd-{0}', inputs.fbsd_sha) || 'latest' }}
     steps:
       - uses: actions/checkout@v4
 

@@ -32,7 +32,7 @@
 # curl are GNUstep's own dependencies, not these libraries'.
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
-#   Inside the nextbsd-kernel-toolchain container (pinned clang/lld 19.1.7 in
+#   Inside the nextbsd-toolchain container (pinned clang/lld 19.1.7 in
 #   $CROSS_BINDIR, meson, ninja, cmake, pkgconf, autotools), with compat's
 #   `continuous` base, nextbsd-displayserver-support's and nextbsd-xlibs'
 #   `continuous` artifacts extracted into $SYSROOT, in that order. $SYSROOT is
