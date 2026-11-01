@@ -12,15 +12,16 @@ epic nextbsd/nextbsd#574.
 | `nextbsd-userland` | Darwin sources, plus Apple's libxml2, libxslt, libffi and curl, and ICU 76.1 | `NextBSD-userland` |
 | `nextbsd-displayserver-support` | libdrm, pixman, expat, freetype, fontconfig, libxkbcommon, the input stack (in `/usr`) | `NextBSD-displayserver-support` |
 | `nextbsd-xlibs` | the X client libraries | `NextBSD-xlibs` |
-| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg** | **`NextBSD-gnustep-support`** |
-| `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool, squashfs) | `NextBSD-gershwin-support` |
+| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg, libsquashfs** | **`NextBSD-gnustep-support`** |
+| `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool); being retired (nextbsd/nextbsd#611) | `NextBSD-gershwin-support` |
 
 ## The rules for what goes here
 
 1. **What GNUstep itself needs** (libs-base, libs-gui, libs-back and the
    libraries they load), and that neither Apple's sources (nextbsd-userland)
    nor the FreeBSD base already provide. Gershwin-only libraries go to
-   nextbsd-gershwin-support.
+   nextbsd-gershwin-support, except libsquashfs, which is here so that
+   Gershwin's AppImage icons need only this package (nextbsd/nextbsd#611).
 2. **Pinned upstream release tarballs only**, each with its URL and SHA-256 in
    `sources.lock`, downloaded at build time. No FreeBSD packages, ports or
    ports tools. NextBSD's changes are a patch series in `patches/<name>/`.
@@ -57,6 +58,7 @@ Built in this order (plan step 9):
 | cairo | 1.18.6 | meson, into `/usr/X11`; xlib, xcb, png, FreeType/fontconfig; no GLib, no LZO | `/usr/X11/lib/libcairo.so.2`, `libcairo-script-interpreter.so.2`, `cairo.pc` and its per-backend `.pc` files | nextbsd/nextbsd-gnustep-support#2 |
 | flite | 2.2 | its configure and makefiles, in tree; one voice | `libflite.so.1`, `libflite_cmulex.so.1`, `libflite_usenglish.so.1`, `libflite_cmu_us_kal16.so.1`, `flite/*.h` | nextbsd/nextbsd-gnustep-support#3 |
 | FFmpeg | 9.0.2 | its configure, LGPL, decoders only | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
+| squashfs-tools-ng | 1.3.2 | autotools, libsquashfs only: zstd, gzip, xz | `libsquashfs.so.1`, `sqfs/*.h`, `libsquashfs1.pc`, `libsquashfs.pc` | nextbsd/nextbsd#611 |
 
 GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
 base, its bundled libtasn1 and libunistring; p11-kit, libidn2, TPM, DANE,
@@ -103,6 +105,20 @@ and the few pieces Whisper's `ffmpeg` command lines need: the raw 32-bit float
 PCM encoder and muxer, resampling, and the OSS input device for recording. The
 users are gnustep-gui (NSMovie, NSSound), libs-av, Gershwin's Player and
 Whisper.
+
+squashfs-tools-ng is built for its library, libsquashfs (LGPL-3.0-or-later),
+which Gershwin's Workspace and gershwin-components' `make_services` use to read
+an AppImage's icon and `.desktop` file out of its squashfs without running or
+mounting it. Its compressors are zstd (appimagetool's default), gzip and xz
+(with legacy lzma), all from the base: zlib and liblzma, and the base's public
+`libzstd.so.1` (`zstd.h`, `libzstd.pc`), which nextbsd-freebsd-compat provides
+(nextbsd/nextbsd#611 step 1; base's `libprivatezstd` has no header or `.pc`).
+zstd is not vendored here. lz4, LZO, bzip2 (squashfs has no bzip2 compressor;
+only the tools' tar streams use it) and SELinux are off, and the tools
+(`gensquashfs`, `rdsquashfs`, `sqfs2tar`, `sqfsdiff`, `tar2sqfs`,
+GPL-3.0-or-later) and their man pages aren't built. Upstream names its `.pc`
+`libsquashfs1.pc`; Workspace's configure asks pkgconf for `libsquashfs`, so the
+same file is also installed as `libsquashfs.pc`.
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
