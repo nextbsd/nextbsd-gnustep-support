@@ -25,10 +25,10 @@
 #
 # Nothing here uses FreeBSD packages, the ports tree or ports tools, and
 # nothing links against nextbsd-userland: these components need only the
-# NextBSD base (compat) sysroot (libc, libm, libthr, zlib, liblzma) and each
-# other, plus, for cairo, nextbsd-displayserver-support (pixman, freetype,
-# fontconfig and expat in /usr) and nextbsd-xlibs (the X libraries in
-# /usr/X11). Base's ICU, libxml2, libxslt, libffi and
+# NextBSD base (compat) sysroot (libc, libm, libthr, zlib, liblzma, and
+# libzstd for libsquashfs) and each other, plus, for cairo,
+# nextbsd-displayserver-support (pixman, freetype, fontconfig and expat in
+# /usr) and nextbsd-xlibs (the X libraries in /usr/X11). Base's ICU, libxml2, libxslt, libffi and
 # curl are GNUstep's own dependencies, not these libraries'.
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
@@ -371,7 +371,8 @@ host_nasm() {
 # =============================================================================
 # Components, in build order (plan step 9): giflib, jpeg, png, gmp,
 # libsndfile, libao, sqlite; then libtiff (jpeg) and nettle (gmp); then GnuTLS;
-# then cairo (png, and nextbsd-xlibs); then flite and FFmpeg.
+# then cairo (png, and nextbsd-xlibs); then flite and FFmpeg; then
+# squashfs-tools-ng's libsquashfs (base's zlib, liblzma and libzstd only).
 # No component has a D-Bus, Avahi or GLib option left on.
 # =============================================================================
 
@@ -844,13 +845,74 @@ build_ffmpeg() {
     done
 }
 
+# squashfs-tools-ng — libsquashfs only (LGPL-3.0-or-later), autotools. Gershwin's
+# Workspace (AppImageIconProvider) and gershwin-components' make_services read
+# an AppImage's .DirIcon and .desktop file straight out of its squashfs with it,
+# without running or mounting the AppImage (nextbsd/nextbsd#611). Workspace's
+# configure asks pkgconf for `libsquashfs`, then `squashfs`, then falls back to
+# <sqfs/predef.h> and -lsquashfs; make_services checks <sqfs/predef.h> only.
+# Upstream installs its .pc as libsquashfs1.pc, so a copy is installed as
+# libsquashfs.pc too.
+#   on:  gzip (zlib), xz and legacy lzma (liblzma), both from the base, and
+#        zstd, appimagetool's default (squashfs compressor id 6), from the
+#        base's public libzstd (libzstd.so.1, zstd.h, libzstd.pc: step 1 of
+#        nextbsd/nextbsd#611 in nextbsd-freebsd-compat; base's libprivatezstd
+#        has no header or .pc). zstd is never vendored here: the OS has one copy.
+#   off: the tools (--without-tools: gensquashfs, rdsquashfs, sqfs2tar,
+#        sqfsdiff, tar2sqfs and their man pages, GPL-3.0-or-later); lz4 (no
+#        AppImage seen uses it); LZO (GPL-2.0); bzip2 (squashfs has no bzip2
+#        compressor: only the tools' tar streams use it, so --without-bzip2
+#        even though the base has a public libbz2); SELinux.
+# Nothing here has a D-Bus, Avahi or GLib option. No configure check runs a
+# target program (the zstd stream check only compiles).
+build_squashfs_tools_ng() {
+    comp "squashfs-tools-ng [autotools cross, libsquashfs only]"
+    local lib="$DESTDIR$PREFIX/lib/libsquashfs.so.1" f
+    # The base's public libzstd, not a private or vendored copy.
+    for f in "$PCDIR/libzstd.pc" "$PREFIX/include/zstd.h" "$PREFIX/lib/libzstd.so.1"; do
+        [ -e "$SYSROOT$f" ] \
+            || fail "squashfs-tools-ng needs the base's public libzstd: $f is not in the compat sysroot (nextbsd-freebsd-compat makes libzstd public, nextbsd/nextbsd#611 step 1; its continuous base must be republished)"
+    done
+    note "base libzstd: $(pkgconf --modversion libzstd) ($PCDIR/libzstd.pc)"
+    fresh_dirs squashfs-tools-ng
+    fetch squashfs-tools-ng
+    autotools_build \
+        --without-tools \
+        --with-gzip --with-xz --with-zstd \
+        --without-lz4 --without-lzo --without-bzip2 --without-selinux \
+        --with-pthread
+    grep -qx '#define HAVE_ZSTD_STREAM 1' "$COMP_BUILD/config.h" \
+        || fail "squashfs-tools-ng: configure did not find zstd's streaming API"
+    # Workspace's pkgconf name, beside upstream's.
+    f="$COMP_ROOT$PREFIX/lib/pkgconfig"
+    [ -f "$f/libsquashfs1.pc" ] || fail "squashfs-tools-ng did not install libsquashfs1.pc"
+    cp -p "$f/libsquashfs1.pc" "$f/libsquashfs.pc"
+    stage squashfs-tools-ng
+    soname_check libsquashfs.so libsquashfs.so.1
+    for f in libz.so liblzma.so libzstd.so.1 libthr.so; do
+        needed_check "$lib" "$f"
+    done
+    if "$READELF" -d "$lib" | grep -E 'NEEDED.*\[lib(privatezstd|lz4|lzo|bz2|selinux)'; then
+        fail "libsquashfs links a library that should be off (or base's private zstd)"
+    fi
+    test -f "$DESTDIR$PREFIX/include/sqfs/predef.h" || fail "sqfs/predef.h not staged"
+    # Its own install root, not $DESTDIR (which holds ffmpeg and nettle's tools).
+    if find "$COMP_ROOT$PREFIX" \( -path "*/bin/*" -o -path "*/share/man/*" \) | grep .; then
+        fail "squashfs-tools-ng installed programs or man pages (the GPL-3.0 tools are not built)"
+    fi
+    cmp -s "$DESTDIR$PCDIR/libsquashfs1.pc" "$DESTDIR$PCDIR/libsquashfs.pc" \
+        || fail "libsquashfs.pc differs from libsquashfs1.pc"
+    pc_check libsquashfs1 "$VERSION"
+    pc_check libsquashfs "$VERSION"
+}
+
 # =============================================================================
 # driver
 # =============================================================================
 # Add a component: pin it in sources.lock, write build_<name>() above (hyphens
 # in the name become underscores in the function), put its patches, if any, in
 # patches/<name>/ with a series file, and append <name> here in build order.
-COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg"
+COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg squashfs-tools-ng"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
