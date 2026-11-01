@@ -896,8 +896,9 @@ build_squashfs_tools_ng() {
         fail "libsquashfs links a library that should be off (or base's private zstd)"
     fi
     test -f "$DESTDIR$PREFIX/include/sqfs/predef.h" || fail "sqfs/predef.h not staged"
-    if [ -e "$DESTDIR$PREFIX/bin" ] || [ -e "$DESTDIR$PREFIX/share/man/man1" ]; then
-        fail "squashfs-tools-ng staged programs or man pages (the GPL-3.0 tools are not built)"
+    # Its own install root, not $DESTDIR (which holds ffmpeg and nettle's tools).
+    if find "$COMP_ROOT$PREFIX" \( -path "*/bin/*" -o -path "*/share/man/*" \) | grep .; then
+        fail "squashfs-tools-ng installed programs or man pages (the GPL-3.0 tools are not built)"
     fi
     cmp -s "$DESTDIR$PCDIR/libsquashfs1.pc" "$DESTDIR$PCDIR/libsquashfs.pc" \
         || fail "libsquashfs.pc differs from libsquashfs1.pc"
