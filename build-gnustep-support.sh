@@ -26,9 +26,10 @@
 # Nothing here uses FreeBSD packages, the ports tree or ports tools, and
 # nothing links against nextbsd-userland: these components need only the
 # NextBSD base (compat) sysroot (libc, libm, libthr, zlib, liblzma, and
-# libzstd for libsquashfs) and each other, plus, for cairo,
-# nextbsd-displayserver-support (pixman, freetype, fontconfig and expat in
-# /usr) and nextbsd-xlibs (the X libraries in /usr/X11). Base's ICU, libxml2, libxslt, libffi and
+# libzstd for libsquashfs, libc++ for poppler) and each other, plus, for
+# cairo, nextbsd-displayserver-support (pixman, freetype, fontconfig and expat
+# in /usr; poppler uses its freetype and fontconfig too) and nextbsd-xlibs
+# (the X libraries in /usr/X11). Base's ICU, libxml2, libxslt, libffi and
 # curl are GNUstep's own dependencies, not these libraries'.
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
@@ -372,7 +373,9 @@ host_nasm() {
 # Components, in build order (plan step 9): giflib, jpeg, png, gmp,
 # libsndfile, libao, sqlite; then libtiff (jpeg) and nettle (gmp); then GnuTLS;
 # then cairo (png, and nextbsd-xlibs); then flite and FFmpeg; then
-# squashfs-tools-ng's libsquashfs (base's zlib, liblzma and libzstd only).
+# squashfs-tools-ng's libsquashfs (base's zlib, liblzma and libzstd only);
+# then poppler (jpeg, png, tiff, and displayserver-support's freetype and
+# fontconfig).
 # No component has a D-Bus, Avahi or GLib option left on.
 # =============================================================================
 
@@ -906,13 +909,106 @@ build_squashfs_tools_ng() {
     pc_check libsquashfs "$VERSION"
 }
 
+# poppler — CMake. The PDF library Preview renders with (nextbsd/nextbsd#716):
+# the core library (libpoppler, xpdf's parser and the Splash rasteriser) and
+# its C++ frontend, poppler-cpp (document, page and text access, and
+# page_renderer, which rasterises a page with Splash into an image a GNUstep
+# app can draw). poppler-cpp is the stable API; the core's own headers are
+# unstable and not installed (ENABLE_UNSTABLE_API_ABI_HEADERS=OFF).
+#   on:  FreeType and fontconfig from nextbsd-displayserver-support (the
+#        copies cairo uses; nothing is vendored), libjpeg (DCT streams),
+#        libpng and libtiff (poppler-cpp's image::save) from this repo, zlib
+#        from base; iconv is libc's (poppler-cpp's text conversion); libc++
+#        from base (C++23).
+#   off: the GLib frontend and its introspection and gtk-doc (plan D2 keeps
+#        GLib out); Qt5 and Qt6; NSS and GPGME (signature verification);
+#        libcurl (HTTP streams); the command-line utilities (pdftotext,
+#        pdftocairo, ...); OpenJPEG (JPX images are skipped), LCMS (no
+#        colour management), Brotli, HarfBuzz (font subsetting when filling
+#        forms) and Boost, none of which the base or this repo has; cairo,
+#        which only the GLib frontend and the utilities use (CairoOutputDev);
+#        gperf (poppler ships its generated tables); every test.
+# poppler-data (the CJK encoding tables) isn't packaged; PDFs needing those
+# encodings render with fallback glyphs.
+# Nothing here has a D-Bus or Avahi option. CMAKE_SKIP_INSTALL_RPATH: poppler
+# sets CMAKE_INSTALL_RPATH_USE_LINK_PATH, which must not record a sysroot path.
+POPPLER_ON="ENABLE_LIBJPEG ENABLE_LIBPNG ENABLE_LIBTIFF WITH_FONTCONFIGURATION_FONTCONFIG"
+POPPLER_OFF="ENABLE_LIBCURL ENABLE_LIBOPENJPEG ENABLE_BROTLI ENABLE_NSS3 ENABLE_GPGME ENABLE_SIGNATURES
+    ENABLE_HARFBUZZ USE_CMS USE_BOOST_HEADERS"
+
+build_poppler() {
+    comp "poppler [cmake cross, core + poppler-cpp]"
+    local lib="$DESTDIR$PREFIX/lib/libpoppler.so.166" cpp="$DESTDIR$PREFIX/lib/libpoppler-cpp.so.3" n f
+    # FreeType and fontconfig from nextbsd-displayserver-support in /usr, the
+    # same ones cairo resolves.
+    for n in freetype2 fontconfig; do
+        f=$(pkgconf --path "$n") || fail "poppler needs nextbsd-displayserver-support's $n.pc (CI stages its continuous artifact)"
+        [ "$f" = "$SYSROOT$PCDIR/$n.pc" ] || fail "pkgconf resolves $n to $f, not $SYSROOT$PCDIR/$n.pc"
+        note "pkgconf path: $n -> ${f#"$SYSROOT"} ($(pkgconf --modversion "$n"))"
+    done
+    fresh_dirs poppler
+    fetch poppler
+    cmake_build \
+        -DENABLE_CPP=ON -DENABLE_UTILS=OFF -DENABLE_UNSTABLE_API_ABI_HEADERS=OFF \
+        -DENABLE_GLIB=OFF -DENABLE_GOBJECT_INTROSPECTION=OFF -DENABLE_GTK_DOC=OFF \
+        -DENABLE_QT5=OFF -DENABLE_QT6=OFF \
+        -DENABLE_NSS3=OFF -DENABLE_GPGME=OFF -DENABLE_LIBCURL=OFF \
+        -DENABLE_LIBJPEG=ON -DENABLE_LIBTIFF=ON -DENABLE_LIBOPENJPEG=OFF -DENABLE_LCMS=OFF \
+        -DENABLE_BROTLI=OFF -DENABLE_HARFBUZZ=OFF -DENABLE_BOOST=OFF -DENABLE_ZLIB_UNCOMPRESS=OFF \
+        -DFONT_CONFIGURATION=fontconfig -DCMAKE_DISABLE_FIND_PACKAGE_Cairo=ON \
+        -DRUN_GPERF_IF_PRESENT=OFF -DCMAKE_SKIP_INSTALL_RPATH=ON \
+        -DBUILD_MANUAL_TESTS=OFF -DBUILD_CPP_TESTS=OFF -DBUILD_GTK_TESTS=OFF \
+        -DBUILD_QT5_TESTS=OFF -DBUILD_QT6_TESTS=OFF
+    # What CMake configured: the features above, and FreeType's and
+    # fontconfig's headers from /usr/include.
+    for n in $POPPLER_ON; do
+        grep -q -x "#define $n 1" "$COMP_BUILD/config.h" "$COMP_BUILD/poppler/poppler-config.h" \
+            || fail "poppler: $n is not 1"
+    done
+    for n in $POPPLER_OFF; do
+        if grep -q -x "#define $n 1" "$COMP_BUILD/config.h" "$COMP_BUILD/poppler/poppler-config.h"; then
+            fail "poppler: $n should be off"
+        fi
+    done
+    if grep -E '^CAIRO_FOUND:.*=(1|ON|TRUE)$' "$COMP_BUILD/CMakeCache.txt"; then
+        fail "poppler: cairo should not be found"
+    fi
+    grep -q -x "FREETYPE_INCLUDE_DIR_ft2build:PATH=$SYSROOT$PREFIX/include/freetype2" "$COMP_BUILD/CMakeCache.txt" \
+        || fail "poppler did not take FreeType from $PREFIX/include/freetype2"
+    grep -q -x "Fontconfig_INCLUDE_DIR:PATH=$SYSROOT$PREFIX/include" "$COMP_BUILD/CMakeCache.txt" \
+        || fail "poppler did not take fontconfig from $PREFIX/include"
+    note "cmake: FreeType and fontconfig from $PREFIX/include"
+    stage poppler
+    soname_check libpoppler.so libpoppler.so.166
+    soname_check libpoppler-cpp.so libpoppler-cpp.so.3
+    for n in libfreetype.so.6 libfontconfig.so.1 libjpeg.so.8 libpng16.so.16 libtiff.so.6 libz.so libc++.so.1; do
+        needed_check "$lib" "$n"
+    done
+    needed_check "$cpp" libpoppler.so.166
+    # Nothing outside poppler, this repo's image libraries,
+    # displayserver-support's FreeType and fontconfig, and the base's zlib,
+    # libc++ and C runtime; every DT_NEEDED in /lib or /usr/lib, no RPATH.
+    for f in "$lib" "$cpp"; do
+        if "$READELF" -d "$f" | grep NEEDED | grep -v -E '\[lib(poppler|freetype|fontconfig|jpeg|png16|tiff|z|c\+\+|cxxrt|c|m|thr|gcc_s)\.so'; then
+            fail "$(basename "$f") links a library outside poppler, its image and font libraries and the base"
+        fi
+        needed_resolve_check "$f"
+    done
+    test -f "$DESTDIR$PREFIX/include/poppler/cpp/poppler-page-renderer.h" || fail "poppler/cpp/poppler-page-renderer.h not staged"
+    if find "$COMP_ROOT$PREFIX" -path "*/bin/*" -o -name 'libpoppler-glib*' -o -name 'libpoppler-qt*' | grep .; then
+        fail "poppler installed programs or a GLib/Qt frontend"
+    fi
+    pc_check poppler "$VERSION"
+    pc_check poppler-cpp "$VERSION"
+}
+
 # =============================================================================
 # driver
 # =============================================================================
 # Add a component: pin it in sources.lock, write build_<name>() above (hyphens
 # in the name become underscores in the function), put its patches, if any, in
 # patches/<name>/ with a series file, and append <name> here in build order.
-COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg squashfs-tools-ng"
+COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg squashfs-tools-ng poppler"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
