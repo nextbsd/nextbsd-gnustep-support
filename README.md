@@ -12,7 +12,7 @@ epic nextbsd/nextbsd#574.
 | `nextbsd-userland` | Darwin sources, plus Apple's libxml2, libxslt, libffi and curl, and ICU 76.1 | `NextBSD-userland` |
 | `nextbsd-displayserver-support` | libdrm, pixman, expat, freetype, fontconfig, libxkbcommon, the input stack (in `/usr`) | `NextBSD-displayserver-support` |
 | `nextbsd-xlibs` | the X client libraries | `NextBSD-xlibs` |
-| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg, libsquashfs** | **`NextBSD-gnustep-support`** |
+| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg, libsquashfs, poppler** | **`NextBSD-gnustep-support`** |
 | `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool); being retired (nextbsd/nextbsd#611) | `NextBSD-gershwin-support` |
 
 ## The rules for what goes here
@@ -22,6 +22,8 @@ epic nextbsd/nextbsd#574.
    nor the FreeBSD base already provide. Gershwin-only libraries go to
    nextbsd-gershwin-support, except libsquashfs, which is here so that
    Gershwin's AppImage icons need only this package (nextbsd/nextbsd#611).
+   The libraries NextBSD's own GNUstep apps need are here too: poppler for
+   Preview (nextbsd/nextbsd#716).
 2. **Pinned upstream release tarballs only**, each with its URL and SHA-256 in
    `sources.lock`, downloaded at build time. No FreeBSD packages, ports or
    ports tools. NextBSD's changes are a patch series in `patches/<name>/`.
@@ -59,6 +61,7 @@ Built in this order (plan step 9):
 | flite | 2.2 | its configure and makefiles, in tree; one voice | `libflite.so.1`, `libflite_cmulex.so.1`, `libflite_usenglish.so.1`, `libflite_cmu_us_kal16.so.1`, `flite/*.h` | nextbsd/nextbsd-gnustep-support#3 |
 | FFmpeg | 9.0.2 | its configure, LGPL; decoders, and the encoders Whisper and screen recording use | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
 | squashfs-tools-ng | 1.3.2 | autotools, libsquashfs only: zstd, gzip, xz | `libsquashfs.so.1`, `sqfs/*.h`, `libsquashfs1.pc`, `libsquashfs.pc` | nextbsd/nextbsd#611 |
+| poppler | 26.11.0 | CMake, core and poppler-cpp only: FreeType/fontconfig, jpeg, png, tiff | `libpoppler.so.166`, `libpoppler-cpp.so.3`, `poppler/cpp/*.h`, `poppler.pc`, `poppler-cpp.pc` | nextbsd/nextbsd#716 |
 
 GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
 base, its bundled libtasn1 and libunistring; p11-kit, libidn2, TPM, DANE,
@@ -126,6 +129,21 @@ GPL-3.0-or-later) and their man pages aren't built. Upstream names its `.pc`
 `libsquashfs1.pc`; Workspace's configure asks pkgconf for `libsquashfs`, so the
 same file is also installed as `libsquashfs.pc`.
 
+poppler is the PDF library Preview renders with (nextbsd/nextbsd#716): the
+core library and its C++ frontend, poppler-cpp, whose `page_renderer`
+rasterises a page with poppler's Splash backend; the core's unstable headers
+aren't installed. FreeType and fontconfig are nextbsd-displayserver-support's
+in `/usr`, the ones cairo uses (the build checks that pkgconf and CMake found
+them there), libjpeg, libpng and libtiff are this repo's, and zlib, iconv and
+libc++ are the base's; nothing is vendored. Off: the GLib frontend (plan D2),
+Qt5 and Qt6, NSS and GPGME, libcurl, the utilities, cairo (only the GLib
+frontend and the utilities use it), and OpenJPEG, LCMS, Brotli, HarfBuzz and
+Boost, which neither the base nor this repo has: JPEG 2000 images are
+skipped, there is no colour management, and form filling can't subset fonts.
+poppler-data (CJK encodings) isn't packaged. The libraries' `DT_NEEDED`
+entries are checked against that list, in `/lib` and `/usr/lib`, with no
+`RPATH`.
+
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
 
@@ -141,7 +159,7 @@ patches/<name>/*.patch       one change each, with an Origin: header
 cross/meson/<arch>.ini       meson cross files (host_machine system = 'freebsd')
 cross/autotools/<arch>.site  autotools CONFIG_SITE files (cross compiler, pkgconf,
 cross/autotools/common.site    cache answers for checks that would run a program)
-cross/cmake/<arch>.cmake     CMake toolchain files (libjpeg-turbo, libsndfile, libtiff)
+cross/cmake/<arch>.cmake     CMake toolchain files (libjpeg-turbo, libsndfile, libtiff, poppler)
 .github/workflows/build.yml  CI: build both arches, publish `continuous`
 NOTICE.md                    per-component provenance and licence
 ```

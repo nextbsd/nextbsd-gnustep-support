@@ -30,3 +30,8 @@ ffmpeg        9.0.2   8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a9
 # tarball (upstream publishes a detached .asc signature, no checksum file),
 # the same pin as nextbsd-gershwin-support's.
 squashfs-tools-ng 1.3.2 0d907ac3e735c351e47c867fb51d94bffa3b05fb95bec01f31e848b7c44215a9  https://infraroot.at/pub/squashfs/squashfs-tools-ng-1.3.2.tar.xz
+# poppler: the core library and poppler-cpp only. 26.11.0 is the latest
+# stable release on poppler.freedesktop.org. Upstream publishes a detached
+# .sig, no checksum file; this SHA-256 matches Homebrew's pin of the same
+# tarball.
+poppler       26.11.0 41c32680160addf5a8dd7a830e4869c01e9f6bee1abb91e44fabd1ba9d7828fb  https://poppler.freedesktop.org/poppler-26.11.0.tar.xz
