@@ -160,8 +160,9 @@ D2) and with it escl, SNMP, systemd, libieee1284 (the base has none, so the
 parallel-port backends aren't built), gphoto2, v4l, USB record/replay
 (libxml2), device locking and NLS. saned, gamma4scanimage and the deprecated
 `sane-config` aren't installed. The build checks the configured features,
-that exactly those backends are staged with their sonames and config files
-and listed in `dll.conf`, and that everything links only SANE, the image
+that exactly those backends are staged with their config files and listed in
+`dll.conf` (each backend's soname is `libsane.so.1`, as upstream builds them),
+and that everything links only SANE, the image
 libraries and the base, from `/lib` and `/usr/lib`, with no `RPATH`.
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)

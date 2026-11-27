@@ -1092,16 +1092,18 @@ build_sane_backends() {
         "$COMP_ROOT$PREFIX/share/man/man1/sane-config.1" "$COMP_ROOT$SANE_SYSCONFDIR/sane.d/saned.conf"
     stage sane-backends
     soname_check libsane.so libsane.so.1
-    # One module per backend, each with its soname and config file, listed in
-    # dll.conf; no other backend.
+    # One module per backend, each with its config file, listed in dll.conf;
+    # no other backend. Every backend's SONAME is libsane.so.1, by upstream's
+    # design (its bundled ltmain.sh renames libsane-<backend> to libsane, so a
+    # program can link one backend in place of the dll).
     for be in $SANE_BACKENDS; do
         f="$x/lib/sane/libsane-$be.so.1"
         [ -e "$f" ] || fail "sane backend $be was not staged"
         # The dynamic section is read whole first: under pipefail, grep -q
         # stopping early could fail the readelf before it.
         got=$("$READELF" -d "$f") || fail "libsane-$be: cannot read its dynamic section"
-        printf '%s\n' "$got" | grep -q "SONAME.*\[libsane-$be.so.1\]" \
-            || fail "libsane-$be does not have SONAME libsane-$be.so.1: $(printf '%s\n' "$got" | grep SONAME)"
+        printf '%s\n' "$got" | grep -q "SONAME.*\[libsane.so.1\]" \
+            || fail "libsane-$be does not have SONAME libsane.so.1: $(printf '%s\n' "$got" | grep SONAME)"
         grep -q -x "$be" "$cfg/dll.conf" || fail "dll.conf does not list $be"
     done
     note "backends ok: $SANE_BACKENDS"
