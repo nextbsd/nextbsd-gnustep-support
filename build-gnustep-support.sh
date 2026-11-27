@@ -1034,7 +1034,9 @@ build_poppler() {
 #   on:  USB through the base's libusb (libusb.so.3, FreeBSD's libusb-1.0
 #        API, libusb-1.0.pc), SCSI through the base's CAM (libcam); libjpeg
 #        (pixma and epsonds need it), libpng and libtiff (scanimage's
-#        --format) from this repo; pthreads for the reader threads; IPv6.
+#        --format) from this repo; IPv6. The backends' reader runs in a
+#        forked process, not a thread: sanei_thread uses threads only where
+#        pthread_t is an integer, and FreeBSD's is a pointer.
 #   off: Avahi (plan D2; it is how net, kodakaio and escl would browse) and
 #        with it escl, which also needs libcurl, libxml2 and poppler-glib;
 #        SNMP; systemd; libieee1284 and parallel-port backends (the base has
@@ -1067,13 +1069,13 @@ build_sane_backends() {
         --with-usb --without-usb-record-replay \
         --without-avahi --without-snmp --without-systemd \
         --without-gphoto2 --without-v4l --without-libcurl --without-poppler-glib \
-        --disable-locking --enable-pthread --disable-preload \
+        --disable-locking --disable-preload \
         --disable-nls --disable-rpath
-    # What configure resolved: libusb-1.0 and pthreads on, nothing off-list.
+    # What configure resolved: libusb-1.0, libjpeg and libpng on, nothing
+    # off-list.
     for c in HAVE_LIBUSB HAVE_LIBJPEG HAVE_LIBPNG; do
         grep -q -x "#define $c 1" "$COMP_BUILD/include/sane/config.h" || fail "sane-backends: $c is not 1"
     done
-    grep -q -x '#define USE_PTHREAD "yes"' "$COMP_BUILD/include/sane/config.h" || fail "sane-backends: USE_PTHREAD is not yes"
     for c in WITH_AVAHI HAVE_LIBSNMP HAVE_SYSTEMD HAVE_LIBIEEE1284 HAVE_LIBXML2 HAVE_LIBCURL HAVE_POPPLER_GLIB \
              HAVE_GPHOTO2 HAVE_LIBV4L1 HAVE_LIBUSB_LEGACY ENABLE_LOCKING; do
         if grep -x "#define $c 1" "$COMP_BUILD/include/sane/config.h"; then
