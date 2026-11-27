@@ -1092,8 +1092,11 @@ build_sane_backends() {
         "$COMP_ROOT$PREFIX/share/man/man1/sane-config.1" "$COMP_ROOT$SANE_SYSCONFDIR/sane.d/saned.conf"
     stage sane-backends
     soname_check libsane.so libsane.so.1
-    # One module per backend, each with its config file, listed in dll.conf;
-    # no other backend. Every backend's SONAME is libsane.so.1, by upstream's
+    # One module per backend, each with its config file and listed in
+    # dll.conf (upstream's file, which names every SANE backend; dll skips
+    # those not installed); no other backend. test is listed commented out,
+    # as upstream ships it, so the virtual scanner appears only when someone
+    # enables it. Every backend's SONAME is libsane.so.1, by upstream's
     # design (its bundled ltmain.sh renames libsane-<backend> to libsane, so a
     # program can link one backend in place of the dll).
     for be in $SANE_BACKENDS; do
@@ -1104,7 +1107,11 @@ build_sane_backends() {
         got=$("$READELF" -d "$f") || fail "libsane-$be: cannot read its dynamic section"
         printf '%s\n' "$got" | grep -q "SONAME.*\[libsane.so.1\]" \
             || fail "libsane-$be does not have SONAME libsane.so.1: $(printf '%s\n' "$got" | grep SONAME)"
-        grep -q -x "$be" "$cfg/dll.conf" || fail "dll.conf does not list $be"
+        if [ "$be" = test ]; then
+            grep -q -x '#test' "$cfg/dll.conf" || fail "dll.conf does not list test (commented out)"
+        else
+            grep -q -x "$be" "$cfg/dll.conf" || fail "dll.conf does not list $be"
+        fi
     done
     note "backends ok: $SANE_BACKENDS"
     got=$(cd "$x/lib/sane" && ls libsane-*.so.1 | sed 's/^libsane-//; s/\.so\.1$//' | LC_ALL=C sort | tr '\n' ' ')

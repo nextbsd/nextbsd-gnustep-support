@@ -153,7 +153,8 @@ in `/usr/lib/sane`, their config files in `/usr/etc/sane.d` (configure's
 default for the `/usr` prefix; rule 6), `scanimage` and `sane-find-scanner`.
 The backends are the common USB scanners' (genesys, pixma, epson2, epsonds,
 fujitsu, plustek, canon_lide70, canon630u, avision, kodakaio), `net` (scanners
-another machine shares with saned) and `test` (a virtual scanner). USB is the
+another machine shares with saned) and `test` (a virtual scanner, commented
+out in upstream's `dll.conf` until someone enables it). USB is the
 base's libusb (`libusb.so.3`, FreeBSD's libusb-1.0 API, `libusb-1.0.pc`), SCSI
 the base's CAM; libjpeg, libpng and libtiff are this repo's. Off: Avahi (plan
 D2) and with it escl, SNMP, systemd, libieee1284 (the base has none, so the
