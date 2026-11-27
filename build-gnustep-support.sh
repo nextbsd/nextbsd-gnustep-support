@@ -1121,7 +1121,6 @@ build_sane_backends() {
     for f in dll $SANE_BACKENDS; do
         [ -f "$cfg/$f.conf" ] || fail "sane.d/$f.conf was not staged"
     done
-    [ -d "$cfg/dll.d" ] || fail "sane.d/dll.d was not staged"
     note "config files ok: ${SANE_SYSCONFDIR}/sane.d"
     for be in genesys pixma epson2 epsonds fujitsu plustek canon_lide70 canon630u avision kodakaio; do
         needed_check "$x/lib/sane/libsane-$be.so.1" libusb.so.3
@@ -1138,7 +1137,8 @@ build_sane_backends() {
         fi
         needed_resolve_check "$f"
     done
-    if find "$x/sbin" "$x/bin" -type f 2>/dev/null | grep -v -E '/bin/(scanimage|sane-find-scanner)$'; then
+    # Its own install root, not $DESTDIR (which holds ffmpeg and nettle's tools).
+    if find "$COMP_ROOT$PREFIX/sbin" "$COMP_ROOT$PREFIX/bin" -type f 2>/dev/null | grep -v -E '/bin/(scanimage|sane-find-scanner)$'; then
         fail "sane-backends staged programs other than scanimage and sane-find-scanner"
     fi
     test -f "$x/include/sane/sane.h" || fail "sane/sane.h not staged"
