@@ -1061,11 +1061,15 @@ build_sane_backends() {
         [ -e "$SYSROOT$f" ] || fail "sane-backends needs the base's libusb: $f is not in the compat sysroot"
     done
     note "base libusb: libusb-1.0 $(pkgconf --modversion libusb-1.0) ($PCDIR/libusb-1.0.pc)"
+    # libusb-1.0.pc says -L/usr/lib -lusb (header in /usr/include); configure
+    # is given that directly, because pkgconf, under the sysroot, would hand
+    # back -L$SYSROOT/usr/lib, which sane-backends.pc would then record.
     fresh_dirs sane-backends
     fetch sane-backends
     autotools_build \
         --sysconfdir="$SANE_SYSCONFDIR" \
         BACKENDS="$SANE_BACKENDS" \
+        USB_CFLAGS= USB_LIBS=-lusb \
         --with-usb --without-usb-record-replay \
         --without-avahi --without-snmp --without-systemd \
         --without-gphoto2 --without-v4l --without-libcurl --without-poppler-glib \
@@ -1111,10 +1115,10 @@ build_sane_backends() {
     needed_check "$x/bin/scanimage" libsane.so.1
     needed_check "$x/bin/sane-find-scanner" libusb.so.3
     # Nothing outside SANE, this repo's image libraries and the base's libusb,
-    # libcam, zlib, libc++ and C runtime; every DT_NEEDED in /lib or /usr/lib,
+    # libcam, zlib, libc++ and C runtime (libdl is base's dlopen stub); every DT_NEEDED in /lib or /usr/lib,
     # no RPATH.
     for f in "$x/lib/libsane.so.1" "$x"/lib/sane/libsane-*.so.1 "$x/bin/scanimage" "$x/bin/sane-find-scanner"; do
-        if "$READELF" -d "$f" | grep NEEDED | grep -v -E '\[lib(sane|usb|cam|jpeg|png16|tiff|z|c\+\+|cxxrt|c|m|thr|gcc_s)\.so'; then
+        if "$READELF" -d "$f" | grep NEEDED | grep -v -E '\[lib(sane|usb|cam|jpeg|png16|tiff|z|c\+\+|cxxrt|c|m|dl|thr|gcc_s)\.so'; then
             fail "$(basename "$f") links a library outside SANE, its image libraries and the base"
         fi
         needed_resolve_check "$f"
