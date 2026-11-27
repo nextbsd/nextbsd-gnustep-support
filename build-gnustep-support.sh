@@ -1097,7 +1097,11 @@ build_sane_backends() {
     for be in $SANE_BACKENDS; do
         f="$x/lib/sane/libsane-$be.so.1"
         [ -e "$f" ] || fail "sane backend $be was not staged"
-        "$READELF" -d "$f" | grep -q "SONAME.*\[libsane-$be.so.1\]" || fail "libsane-$be does not have SONAME libsane-$be.so.1"
+        # The dynamic section is read whole first: under pipefail, grep -q
+        # stopping early could fail the readelf before it.
+        got=$("$READELF" -d "$f") || fail "libsane-$be: cannot read its dynamic section"
+        printf '%s\n' "$got" | grep -q "SONAME.*\[libsane-$be.so.1\]" \
+            || fail "libsane-$be does not have SONAME libsane-$be.so.1: $(printf '%s\n' "$got" | grep SONAME)"
         grep -q -x "$be" "$cfg/dll.conf" || fail "dll.conf does not list $be"
     done
     note "backends ok: $SANE_BACKENDS"
