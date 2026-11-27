@@ -57,7 +57,7 @@ Built in this order (plan step 9):
 | GnuTLS | 3.8.13 | autotools, minimal | `libgnutls.so.30`, `gnutls.pc` | nextbsd/nextbsd-gnustep-support#1 |
 | cairo | 1.18.6 | meson, into `/usr/X11`; xlib, xcb, png, FreeType/fontconfig; no GLib, no LZO | `/usr/X11/lib/libcairo.so.2`, `libcairo-script-interpreter.so.2`, `cairo.pc` and its per-backend `.pc` files | nextbsd/nextbsd-gnustep-support#2 |
 | flite | 2.2 | its configure and makefiles, in tree; one voice | `libflite.so.1`, `libflite_cmulex.so.1`, `libflite_usenglish.so.1`, `libflite_cmu_us_kal16.so.1`, `flite/*.h` | nextbsd/nextbsd-gnustep-support#3 |
-| FFmpeg | 9.0.2 | its configure, LGPL, decoders only | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
+| FFmpeg | 9.0.2 | its configure, LGPL; decoders, and the encoders Whisper and screen recording use | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
 | squashfs-tools-ng | 1.3.2 | autotools, libsquashfs only: zstd, gzip, xz | `libsquashfs.so.1`, `sqfs/*.h`, `libsquashfs1.pc`, `libsquashfs.pc` | nextbsd/nextbsd#611 |
 
 GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
@@ -92,7 +92,7 @@ configure builds the `speech` and `say` tools only when
 `-lflite_cmu_us_kal16` links), with the US English language and CMU lexicon
 it needs. Output is OSS. No `flite` programs, static archives or other voices.
 
-FFmpeg is LGPL-2.1-or-later and decoder-only (plan Q6): no `--enable-gpl`,
+FFmpeg is LGPL-2.1-or-later and mostly decoders (plan Q6): no `--enable-gpl`,
 `--enable-version3` or `--enable-nonfree`, `--disable-autodetect` and
 `--disable-iconv` (no external library of any kind, zlib and libc's iconv
 included), no network, no hardware
@@ -102,9 +102,15 @@ FLAC, MP1/2/3, Opus, Vorbis, PCM and IMA/MS ADPCM; H.264, HEVC, VP8, VP9,
 MPEG-1/2/4, H.263, MJPEG, Theora; MP4/MOV, Matroska/WebM, Ogg, WAV, AIFF, CAF,
 AU, AVI, MPEG-PS/TS and raw audio streams), the `file` and `pipe` protocols,
 and the few pieces Whisper's `ffmpeg` command lines need: the raw 32-bit float
-PCM encoder and muxer, resampling, and the OSS input device for recording. The
-users are gnustep-gui (NSMovie, NSSound), libs-av, Gershwin's Player and
-Whisper.
+PCM encoder and muxer, resampling, and the OSS input device for recording.
+For screen recording (Screenshot.app, nextbsd/nextbsd#715), which pipes raw
+BGRA frames into `ffmpeg -f rawvideo -pix_fmt bgra -s WxH -r 30 -i pipe:0
+-c:v mpeg4 -q:v 3 out.mov`, it also has the rawvideo demuxer and decoder,
+FFmpeg's native MPEG-4 Part 2 and AAC encoders (libx264 is GPL and libfdk-aac
+nonfree, so neither is built), the mov and mp4 muxers, and the scale and pad
+filters. The build checks in `config_components.h` that configure turned each
+of them on. The users are gnustep-gui (NSMovie, NSSound), libs-av, Gershwin's
+Player, Whisper and Screenshot.app.
 
 squashfs-tools-ng is built for its library, libsquashfs (LGPL-3.0-or-later),
 which Gershwin's Workspace and gershwin-components' `make_services` use to read
