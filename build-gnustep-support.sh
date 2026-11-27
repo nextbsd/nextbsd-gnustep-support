@@ -1114,8 +1114,10 @@ build_sane_backends() {
         fi
     done
     note "backends ok: $SANE_BACKENDS"
+    # lib/sane also holds libsane-dll, the dll backend libsane is built from.
     got=$(cd "$x/lib/sane" && ls libsane-*.so.1 | sed 's/^libsane-//; s/\.so\.1$//' | LC_ALL=C sort | tr '\n' ' ')
-    [ "$got" = "$(printf '%s\n' $SANE_BACKENDS | LC_ALL=C sort | tr '\n' ' ')" ] || fail "sane backends staged: $got (expected $SANE_BACKENDS)"
+    f=$(printf '%s\n' dll $SANE_BACKENDS | LC_ALL=C sort | tr '\n' ' ')
+    [ "$got" = "$f" ] || fail "sane backends staged: $got (expected $f)"
     for f in dll $SANE_BACKENDS; do
         [ -f "$cfg/$f.conf" ] || fail "sane.d/$f.conf was not staged"
     done
