@@ -26,10 +26,11 @@
 # Nothing here uses FreeBSD packages, the ports tree or ports tools, and
 # nothing links against nextbsd-userland: these components need only the
 # NextBSD base (compat) sysroot (libc, libm, libthr, zlib, liblzma, and
-# libzstd for libsquashfs, libc++ for poppler) and each other, plus, for
-# cairo, nextbsd-displayserver-support (pixman, freetype, fontconfig and expat
-# in /usr; poppler uses its freetype and fontconfig too) and nextbsd-xlibs
-# (the X libraries in /usr/X11). Base's ICU, libxml2, libxslt, libffi and
+# libzstd for libsquashfs, libc++ for poppler, libusb, libcam and libc++
+# for SANE) and each other, plus, for cairo, nextbsd-displayserver-support
+# (pixman, freetype, fontconfig and expat in /usr; poppler uses its
+# freetype and fontconfig too) and nextbsd-xlibs (the X libraries in
+# /usr/X11). Base's ICU, libxml2, libxslt, libffi and
 # curl are GNUstep's own dependencies, not these libraries'.
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
@@ -375,7 +376,7 @@ host_nasm() {
 # then cairo (png, and nextbsd-xlibs); then flite and FFmpeg; then
 # squashfs-tools-ng's libsquashfs (base's zlib, liblzma and libzstd only);
 # then poppler (jpeg, png, tiff, and displayserver-support's freetype and
-# fontconfig).
+# fontconfig); then sane-backends (jpeg, png, tiff, and base's libusb).
 # No component has a D-Bus, Avahi or GLib option left on.
 # =============================================================================
 
@@ -1021,13 +1022,136 @@ build_poppler() {
     pc_check poppler-cpp "$VERSION"
 }
 
+# sane-backends — autotools. SANE for Scanner.app (nextbsd/nextbsd#717): the
+# library (libsane, SANE's dll meta-backend, which dlopens the backends listed
+# in dll.conf), a small set of backends, their config files, scanimage and
+# sane-find-scanner.
+#   backends: the common USB scanners' (genesys: Canon LiDE and most other
+#        CIS flatbeds; pixma: Canon PIXMA; epson2 and epsonds: Epson; fujitsu:
+#        ScanSnap and fi-series; plustek; canon_lide70 and canon630u; avision;
+#        kodakaio), net (scanners shared by saned on another machine) and
+#        test (a virtual scanner for trying a frontend without hardware).
+#   on:  USB through the base's libusb (libusb.so.3, FreeBSD's libusb-1.0
+#        API, libusb-1.0.pc), SCSI through the base's CAM (libcam); libjpeg
+#        (pixma and epsonds need it), libpng and libtiff (scanimage's
+#        --format) from this repo; IPv6. The backends' reader runs in a
+#        forked process, not a thread: sanei_thread uses threads only where
+#        pthread_t is an integer, and FreeBSD's is a pointer.
+#   off: Avahi (plan D2; it is how net, kodakaio and escl would browse) and
+#        with it escl, which also needs libcurl, libxml2 and poppler-glib;
+#        SNMP; systemd; libieee1284 and parallel-port backends (the base has
+#        no libieee1284, so configure finds none); gphoto2 and v4l; USB
+#        record/replay (libxml2); device locking (it wants a lock directory
+#        and group at install time); NLS; static preloading (each backend is
+#        its own module in /usr/lib/sane).
+# The config files go to configure's default for this prefix, /usr/etc/sane.d
+# (rule 6: the package ships no /etc). saned, the network scanning daemon,
+# isn't installed (Scanner.app is a client; net reaches other machines'
+# saned), nor are gamma4scanimage and the deprecated sane-config script.
+# Licence: GPL-2.0-or-later; libsane and most backends carry SANE's linking
+# exception (LICENSE, each backend's file header). See NOTICE.md.
+SANE_BACKENDS="genesys pixma epson2 epsonds fujitsu plustek canon_lide70 canon630u avision kodakaio net test"
+SANE_SYSCONFDIR=$PREFIX/etc
+
+build_sane_backends() {
+    comp "sane-backends [autotools cross]"
+    local x="$DESTDIR$PREFIX" cfg="$DESTDIR$SANE_SYSCONFDIR/sane.d" be f got c
+    # The base's libusb, FreeBSD's implementation of the libusb-1.0 API.
+    for f in "$PCDIR/libusb-1.0.pc" "$PREFIX/include/libusb.h" "$PREFIX/lib/libusb.so.3"; do
+        [ -e "$SYSROOT$f" ] || fail "sane-backends needs the base's libusb: $f is not in the compat sysroot"
+    done
+    note "base libusb: libusb-1.0 $(pkgconf --modversion libusb-1.0) ($PCDIR/libusb-1.0.pc)"
+    # libusb-1.0.pc says -L/usr/lib -lusb (header in /usr/include); configure
+    # is given that directly, because pkgconf, under the sysroot, would hand
+    # back -L$SYSROOT/usr/lib, which sane-backends.pc would then record.
+    fresh_dirs sane-backends
+    fetch sane-backends
+    autotools_build \
+        --sysconfdir="$SANE_SYSCONFDIR" \
+        BACKENDS="$SANE_BACKENDS" \
+        USB_CFLAGS= USB_LIBS=-lusb \
+        --with-usb --without-usb-record-replay \
+        --without-avahi --without-snmp --without-systemd \
+        --without-gphoto2 --without-v4l --without-libcurl --without-poppler-glib \
+        --disable-locking --disable-preload \
+        --disable-nls --disable-rpath
+    # What configure resolved: libusb-1.0, libjpeg and libpng on, nothing
+    # off-list.
+    for c in HAVE_LIBUSB HAVE_LIBJPEG HAVE_LIBPNG; do
+        grep -q -x "#define $c 1" "$COMP_BUILD/include/sane/config.h" || fail "sane-backends: $c is not 1"
+    done
+    for c in WITH_AVAHI HAVE_LIBSNMP HAVE_SYSTEMD HAVE_LIBIEEE1284 HAVE_LIBXML2 HAVE_LIBCURL HAVE_POPPLER_GLIB \
+             HAVE_GPHOTO2 HAVE_LIBV4L1 HAVE_LIBUSB_LEGACY ENABLE_LOCKING; do
+        if grep -x "#define $c 1" "$COMP_BUILD/include/sane/config.h"; then
+            fail "sane-backends: $c should be off"
+        fi
+    done
+    # saned, gamma4scanimage and sane-config aren't shipped (see above).
+    rm -f "$COMP_ROOT$PREFIX/sbin/saned" "$COMP_ROOT$PREFIX/bin/gamma4scanimage" "$COMP_ROOT$PREFIX/bin/sane-config" \
+        "$COMP_ROOT$PREFIX/share/man/man8/saned.8" "$COMP_ROOT$PREFIX/share/man/man1/gamma4scanimage.1" \
+        "$COMP_ROOT$PREFIX/share/man/man1/sane-config.1" "$COMP_ROOT$SANE_SYSCONFDIR/sane.d/saned.conf"
+    stage sane-backends
+    soname_check libsane.so libsane.so.1
+    # One module per backend, each with its config file and listed in
+    # dll.conf (upstream's file, which names every SANE backend; dll skips
+    # those not installed); no other backend. test is listed commented out,
+    # as upstream ships it, so the virtual scanner appears only when someone
+    # enables it. Every backend's SONAME is libsane.so.1, by upstream's
+    # design (its bundled ltmain.sh renames libsane-<backend> to libsane, so a
+    # program can link one backend in place of the dll).
+    for be in $SANE_BACKENDS; do
+        f="$x/lib/sane/libsane-$be.so.1"
+        [ -e "$f" ] || fail "sane backend $be was not staged"
+        # The dynamic section is read whole first: under pipefail, grep -q
+        # stopping early could fail the readelf before it.
+        got=$("$READELF" -d "$f") || fail "libsane-$be: cannot read its dynamic section"
+        printf '%s\n' "$got" | grep -q "SONAME.*\[libsane.so.1\]" \
+            || fail "libsane-$be does not have SONAME libsane.so.1: $(printf '%s\n' "$got" | grep SONAME)"
+        if [ "$be" = test ]; then
+            grep -q -x '#test' "$cfg/dll.conf" || fail "dll.conf does not list test (commented out)"
+        else
+            grep -q -x "$be" "$cfg/dll.conf" || fail "dll.conf does not list $be"
+        fi
+    done
+    note "backends ok: $SANE_BACKENDS"
+    # lib/sane also holds libsane-dll, the dll backend libsane is built from.
+    got=$(cd "$x/lib/sane" && ls libsane-*.so.1 | sed 's/^libsane-//; s/\.so\.1$//' | LC_ALL=C sort | tr '\n' ' ')
+    f=$(printf '%s\n' dll $SANE_BACKENDS | LC_ALL=C sort | tr '\n' ' ')
+    [ "$got" = "$f" ] || fail "sane backends staged: $got (expected $f)"
+    for f in dll $SANE_BACKENDS; do
+        [ -f "$cfg/$f.conf" ] || fail "sane.d/$f.conf was not staged"
+    done
+    note "config files ok: ${SANE_SYSCONFDIR}/sane.d"
+    for be in genesys pixma epson2 epsonds fujitsu plustek canon_lide70 canon630u avision kodakaio; do
+        needed_check "$x/lib/sane/libsane-$be.so.1" libusb.so.3
+    done
+    needed_check "$x/lib/sane/libsane-pixma.so.1" libjpeg.so.8
+    needed_check "$x/bin/scanimage" libsane.so.1
+    needed_check "$x/bin/sane-find-scanner" libusb.so.3
+    # Nothing outside SANE, this repo's image libraries and the base's libusb,
+    # libcam, zlib, libc++ and C runtime (libdl is base's dlopen stub); every DT_NEEDED in /lib or /usr/lib,
+    # no RPATH.
+    for f in "$x/lib/libsane.so.1" "$x"/lib/sane/libsane-*.so.1 "$x/bin/scanimage" "$x/bin/sane-find-scanner"; do
+        if "$READELF" -d "$f" | grep NEEDED | grep -v -E '\[lib(sane|usb|cam|jpeg|png16|tiff|z|c\+\+|cxxrt|c|m|dl|thr|gcc_s)\.so'; then
+            fail "$(basename "$f") links a library outside SANE, its image libraries and the base"
+        fi
+        needed_resolve_check "$f"
+    done
+    # Its own install root, not $DESTDIR (which holds ffmpeg and nettle's tools).
+    if find "$COMP_ROOT$PREFIX/sbin" "$COMP_ROOT$PREFIX/bin" -type f 2>/dev/null | grep -v -E '/bin/(scanimage|sane-find-scanner)$'; then
+        fail "sane-backends staged programs other than scanimage and sane-find-scanner"
+    fi
+    test -f "$x/include/sane/sane.h" || fail "sane/sane.h not staged"
+    pc_check sane-backends "$VERSION"
+}
+
 # =============================================================================
 # driver
 # =============================================================================
 # Add a component: pin it in sources.lock, write build_<name>() above (hyphens
 # in the name become underscores in the function), put its patches, if any, in
 # patches/<name>/ with a series file, and append <name> here in build order.
-COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg squashfs-tools-ng poppler"
+COMPONENTS="giflib libjpeg-turbo libpng gmp libsndfile libao sqlite libtiff nettle gnutls cairo flite ffmpeg squashfs-tools-ng poppler sane-backends"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do

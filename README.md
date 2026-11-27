@@ -12,7 +12,7 @@ epic nextbsd/nextbsd#574.
 | `nextbsd-userland` | Darwin sources, plus Apple's libxml2, libxslt, libffi and curl, and ICU 76.1 | `NextBSD-userland` |
 | `nextbsd-displayserver-support` | libdrm, pixman, expat, freetype, fontconfig, libxkbcommon, the input stack (in `/usr`) | `NextBSD-displayserver-support` |
 | `nextbsd-xlibs` | the X client libraries | `NextBSD-xlibs` |
-| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg, libsquashfs, poppler** | **`NextBSD-gnustep-support`** |
+| **`nextbsd-gnustep-support`** | **image formats, sound, SQLite, GnuTLS, cairo, flite, FFmpeg, libsquashfs, poppler, SANE** | **`NextBSD-gnustep-support`** |
 | `nextbsd-gershwin-support` | what only Gershwin uses (wget, lcms2, xdotool); being retired (nextbsd/nextbsd#611) | `NextBSD-gershwin-support` |
 
 ## The rules for what goes here
@@ -23,7 +23,8 @@ epic nextbsd/nextbsd#574.
    nextbsd-gershwin-support, except libsquashfs, which is here so that
    Gershwin's AppImage icons need only this package (nextbsd/nextbsd#611).
    The libraries NextBSD's own GNUstep apps need are here too: poppler for
-   Preview (nextbsd/nextbsd#716).
+   Preview (nextbsd/nextbsd#716) and SANE for Scanner.app
+   (nextbsd/nextbsd#717).
 2. **Pinned upstream release tarballs only**, each with its URL and SHA-256 in
    `sources.lock`, downloaded at build time. No FreeBSD packages, ports or
    ports tools. NextBSD's changes are a patch series in `patches/<name>/`.
@@ -40,6 +41,7 @@ epic nextbsd/nextbsd#574.
    off. mDNSResponder's `dns_sd` is NextBSD's DNS-SD. pkgconf, never
    freedesktop's `pkg-config` (D1).
 6. **It ships no `/etc`.** Configuration, if any, comes from `nextbsd-overlays`.
+   SANE's default config files install under the prefix, in `/usr/etc/sane.d`.
 
 ## Components
 
@@ -62,6 +64,7 @@ Built in this order (plan step 9):
 | FFmpeg | 9.0.2 | its configure, LGPL; decoders, and the encoders Whisper and screen recording use | `libavutil.so.61`, `libavcodec.so.63`, `libavformat.so.63`, `libavdevice.so.63`, `libavfilter.so.12`, `libswscale.so.10`, `libswresample.so.7`, their `.pc` files, `ffmpeg` | nextbsd/nextbsd-gnustep-support#3 |
 | squashfs-tools-ng | 1.3.2 | autotools, libsquashfs only: zstd, gzip, xz | `libsquashfs.so.1`, `sqfs/*.h`, `libsquashfs1.pc`, `libsquashfs.pc` | nextbsd/nextbsd#611 |
 | poppler | 26.11.0 | CMake, core and poppler-cpp only: FreeType/fontconfig, jpeg, png, tiff | `libpoppler.so.166`, `libpoppler-cpp.so.3`, `poppler/cpp/*.h`, `poppler.pc`, `poppler-cpp.pc` | nextbsd/nextbsd#716 |
+| sane-backends | 1.4.0 | autotools; base libusb; 12 backends, no Avahi/SNMP/systemd | `libsane.so.1`, `sane/libsane-<backend>.so.1`, `/usr/etc/sane.d/*.conf`, `sane/*.h`, `sane-backends.pc`, `scanimage`, `sane-find-scanner` | nextbsd/nextbsd#717 |
 
 GnuTLS is minimal (plan Q3): nettle, hogweed and gmp from this repo, zlib from
 base, its bundled libtasn1 and libunistring; p11-kit, libidn2, TPM, DANE,
@@ -143,6 +146,25 @@ skipped, there is no colour management, and form filling can't subset fonts.
 poppler-data (CJK encodings) isn't packaged. The libraries' `DT_NEEDED`
 entries are checked against that list, in `/lib` and `/usr/lib`, with no
 `RPATH`.
+
+sane-backends is SANE for Scanner.app (nextbsd/nextbsd#717): `libsane` (the
+dll meta-backend, which loads the backends `dll.conf` lists), twelve backends
+in `/usr/lib/sane`, their config files in `/usr/etc/sane.d` (configure's
+default for the `/usr` prefix; rule 6), `scanimage` and `sane-find-scanner`.
+The backends are the common USB scanners' (genesys, pixma, epson2, epsonds,
+fujitsu, plustek, canon_lide70, canon630u, avision, kodakaio), `net` (scanners
+another machine shares with saned) and `test` (a virtual scanner, commented
+out in upstream's `dll.conf` until someone enables it). USB is the
+base's libusb (`libusb.so.3`, FreeBSD's libusb-1.0 API, `libusb-1.0.pc`), SCSI
+the base's CAM; libjpeg, libpng and libtiff are this repo's. Off: Avahi (plan
+D2) and with it escl, SNMP, systemd, libieee1284 (the base has none, so the
+parallel-port backends aren't built), gphoto2, v4l, USB record/replay
+(libxml2), device locking and NLS. saned, gamma4scanimage and the deprecated
+`sane-config` aren't installed. The build checks the configured features,
+that exactly those backends are staged with their config files and listed in
+`dll.conf` (each backend's soname is `libsane.so.1`, as upstream builds them),
+and that everything links only SANE, the image
+libraries and the base, from `/lib` and `/usr/lib`, with no `RPATH`.
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
