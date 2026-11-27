@@ -752,8 +752,17 @@ build_flite() {
 #   - one encoder and one muxer, raw 32-bit float PCM, for Whisper, which runs
 #     `ffmpeg -i <file> -f f32le -acodec pcm_f32le -ar 16000 -ac 1 pipe:1`;
 #   - the OSS input device: Whisper records with `ffmpeg -f oss -i /dev/dsp`;
-#   - the filters the ffmpeg command needs (resampling, format conversion, and
-#     those it selects itself).
+#   - for screen recording (Screenshot.app, nextbsd/nextbsd#715), which pipes
+#     WindowServer's BGRA frames into `ffmpeg -f rawvideo -pix_fmt bgra
+#     -s WxH -r 30 -i pipe:0 -c:v mpeg4 -q:v 3 out.mov`: the rawvideo demuxer
+#     and decoder, FFmpeg's native MPEG-4 Part 2 video and AAC audio encoders
+#     (the LGPL ones; libx264 is GPL and libfdk-aac nonfree, so neither is
+#     built), and the mov and mp4 muxers; the microphone comes in through the
+#     OSS device above;
+#   - the filters the ffmpeg command needs (resampling, format conversion,
+#     scaling from BGRA to the encoder's yuv420p, pad to round a selection up
+#     to the even width and height yuv420p needs, and those it selects
+#     itself: crop, trim, atrim and the like).
 # Libraries libavutil, libavcodec, libavformat, libavdevice, libavfilter,
 # libswscale and libswresample with upstream sonames, and the `ffmpeg`
 # command; no ffprobe or ffplay (which needs SDL). x86-64 assembly with NASM;
@@ -761,14 +770,14 @@ build_flite() {
 FFMPEG_DECODERS="aac ac3 eac3 alac flac mp1float mp2float mp3float opus vorbis
     pcm_s8 pcm_u8 pcm_s16le pcm_s16be pcm_s24le pcm_s24be pcm_s32le pcm_s32be
     pcm_f32le pcm_f32be pcm_f64le pcm_f64be pcm_alaw pcm_mulaw adpcm_ima_wav adpcm_ms
-    h264 hevc vp8 vp9 mpeg4 h263 mpeg1video mpeg2video mjpeg theora"
-FFMPEG_DEMUXERS="mov matroska ogg wav aiff caf au flac mp3 aac ac3 eac3 avi mpegps mpegts"
+    h264 hevc vp8 vp9 mpeg4 h263 mpeg1video mpeg2video mjpeg theora rawvideo"
+FFMPEG_DEMUXERS="mov matroska ogg wav aiff caf au flac mp3 aac ac3 eac3 avi mpegps mpegts rawvideo"
 FFMPEG_PARSERS="aac ac3 flac mpegaudio opus vorbis h264 hevc vp8 vp9 mpeg4video mpegvideo mjpeg h263"
 FFMPEG_PROTOCOLS="file pipe"
-FFMPEG_ENCODERS="pcm_f32le"
-FFMPEG_MUXERS="pcm_f32le"
+FFMPEG_ENCODERS="pcm_f32le mpeg4 aac"
+FFMPEG_MUXERS="pcm_f32le mov mp4"
 FFMPEG_INDEVS="oss"
-FFMPEG_FILTERS="aresample aformat anull format null scale"
+FFMPEG_FILTERS="aresample aformat anull format null scale pad"
 
 build_ffmpeg() {
     comp "ffmpeg [configure cross]"
@@ -813,6 +822,16 @@ build_ffmpeg() {
             grep -qx "#define CONFIG_$c 0" config.h || fail "FFmpeg: CONFIG_$c is not 0"
         done
         grep -qx '#define CONFIG_OSS_INDEV 1' config_components.h || fail "FFmpeg: the OSS input device is not enabled"
+        # Screen recording's pieces (nextbsd/nextbsd#715), each as configure
+        # resolved it, and no GPL or nonfree encoder in their place.
+        for c in MPEG4_ENCODER AAC_ENCODER MOV_MUXER MP4_MUXER RAWVIDEO_DEMUXER RAWVIDEO_DECODER \
+                 SCALE_FILTER PAD_FILTER FORMAT_FILTER; do
+            grep -qx "#define CONFIG_$c 1" config_components.h || fail "FFmpeg: CONFIG_$c is not 1"
+            note "config_components.h: CONFIG_$c 1"
+        done
+        if grep -E '#define CONFIG_LIB(X264|X265|FDK_AAC|XVID)_ENCODER 1' config_components.h; then
+            fail "FFmpeg: an external GPL or nonfree encoder is enabled"
+        fi
         grep -qx '#define HAVE_PTHREADS 1' config.h || fail "FFmpeg: pthreads are not enabled"
         make $JOBS
         # The libraries, headers, .pc files and the ffmpeg command; not
